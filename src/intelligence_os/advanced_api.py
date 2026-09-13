@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from .accounts import enrich_latest_accounts
 from .advanced import (
     analyst,
     approve_action,
@@ -17,12 +18,13 @@ from .advanced import (
     infer_people,
     peer_anomalies,
     propose_actions,
-    rebuild_graph,
     record_outcome,
     snapshot_changes,
     tender_score,
 )
 from .db import list_actions, list_alerts, list_people, list_watchlists
+from .graph_engine import rebuild_enriched_graph
+from .learning import calibrated_opportunities, calibration
 from .ownership import enrich_ownership
 from .uk import ExternalServiceError
 
@@ -90,10 +92,20 @@ def ownership_enrich(company_id: str) -> dict:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.post("/companies/{company_id}/accounts/enrich")
+def accounts_enrich(company_id: str) -> dict:
+    try:
+        return enrich_latest_accounts(company_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ExternalServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.post("/companies/{company_id}/graph/rebuild")
 def graph_rebuild(company_id: str) -> dict:
     try:
-        return rebuild_graph(company_id)
+        return rebuild_enriched_graph(company_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Company not found") from exc
 
@@ -190,3 +202,16 @@ def outcome_create(request: OutcomeRequest) -> dict:
 @router.get("/feedback")
 def feedback() -> dict:
     return feedback_summary()
+
+
+@router.get("/feedback/calibration")
+def feedback_calibration() -> dict:
+    return calibration()
+
+
+@router.get("/companies/{company_id}/opportunities/calibrated")
+def learned_opportunities(company_id: str) -> list[dict]:
+    try:
+        return calibrated_opportunities(company_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Company not found") from exc
