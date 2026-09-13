@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from . import __version__
+from .advanced_api import router as advanced_router
 from .db import init_db
 from .enrichment import enrich_companies_house, enrich_jobs, enrich_technology
 from .market import NomisClient
@@ -36,6 +37,7 @@ app = FastAPI(
     ),
 )
 app.include_router(procurement_router)
+app.include_router(advanced_router)
 
 
 @app.middleware("http")
