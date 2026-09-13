@@ -137,6 +137,13 @@ def system_status() -> dict:
                 "configured": bool(settings.companies_house_api_key),
                 "mode": "live" if settings.companies_house_api_key else "credential_required",
             },
-            "contracts_finder": {"configured": True, "mode": "public_endpoint"},
+            "contracts_finder": {"configured": True, "mode": "public_ocds"},
+            "find_a_tender": {"configured": True, "mode": "public_ocds"},
+            "nomis": {
+                "configured": True,
+                "mode": "authenticated" if settings.nomis_uid else "anonymous_25000_cell_limit",
+            },
+            "website_technology": {"configured": True, "mode": "public_web"},
+            "public_careers": {"configured": True, "mode": "public_web"},
         },
     }
