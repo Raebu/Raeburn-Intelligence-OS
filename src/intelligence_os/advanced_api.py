@@ -26,6 +26,7 @@ from .db import list_actions, list_alerts, list_people, list_watchlists
 from .graph_engine import rebuild_enriched_graph
 from .learning import calibrated_opportunities, calibration
 from .ownership import enrich_ownership
+from .people_web import enrich_public_people
 from .uk import ExternalServiceError
 
 router = APIRouter(prefix="/v1", tags=["advanced-intelligence"])
@@ -75,6 +76,18 @@ def people_rebuild(company_id: str) -> list[dict]:
         return infer_people(company_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Company not found") from exc
+
+
+@router.post("/companies/{company_id}/people/enrich-public")
+def people_public_enrich(company_id: str, url: str) -> dict:
+    try:
+        return enrich_public_people(company_id, url)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Company not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ExternalServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/companies/{company_id}/people")
