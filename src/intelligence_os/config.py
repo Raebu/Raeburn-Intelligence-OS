@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     database_url: str = "sqlite:///./raeburn_intelligence.db"
+    api_key: str | None = None
     companies_house_api_key: str | None = None
     companies_house_base_url: str = "https://api.company-information.service.gov.uk"
     contracts_finder_base_url: str = (
