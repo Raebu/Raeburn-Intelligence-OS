@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from statistics import mean, pstdev
@@ -63,6 +64,10 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _json_safe(value: Any) -> Any:
+    return json.loads(json.dumps(value, default=str))
+
+
 def capture_snapshot(company_id: str, snapshot_type: str = "digital_twin") -> dict:
     twin = digital_twin(company_id)
     evidence_ids = [row["id"] for row in twin["evidence"]]
@@ -71,7 +76,7 @@ def capture_snapshot(company_id: str, snapshot_type: str = "digital_twin") -> di
         company_id=company_id,
         snapshot_type=snapshot_type,
         captured_at=_now(),
-        data=twin,
+        data=_json_safe(twin),
         evidence_ids=evidence_ids,
     )
     save_snapshot(row)
@@ -99,7 +104,10 @@ def snapshot_changes(company_id: str, snapshot_type: str = "digital_twin") -> di
     before = _flatten(previous.data)
     after = _flatten(latest.data)
     changes = []
+    ignored_suffixes = ("created_at", "detected_at", "updated_at", "observed_at")
     for key in sorted(set(before) | set(after)):
+        if key.endswith(ignored_suffixes):
+            continue
         if before.get(key) != after.get(key):
             changes.append({"field": key, "before": before.get(key), "after": after.get(key)})
     return {
@@ -111,6 +119,8 @@ def snapshot_changes(company_id: str, snapshot_type: str = "digital_twin") -> di
 
 
 def infer_people(company_id: str) -> list[dict]:
+    if get_company(company_id) is None:
+        raise KeyError(company_id)
     evidence = list_evidence(company_id)
     officers = next((row for row in evidence if row.fact_type == "officers"), None)
     items = (officers.value or {}).get("items", []) if officers else []
@@ -123,7 +133,10 @@ def infer_people(company_id: str) -> list[dict]:
             continue
         occupation = str(item.get("occupation") or item.get("officer_role") or "director")
         lowered = occupation.lower()
-        family = next((family for phrase, family in ROLE_FAMILIES.items() if phrase in lowered), "executive")
+        family = next(
+            (role_family for phrase, role_family in ROLE_FAMILIES.items() if phrase in lowered),
+            "executive",
+        )
         confidence = 0.95 if item.get("officer_role") else 0.75
         people.append(
             PersonRow(
@@ -148,7 +161,9 @@ def rebuild_graph(company_id: str) -> dict:
     company = get_company(company_id)
     if company is None:
         raise KeyError(company_id)
-    people = list_people(company_id) or [PersonRow(**row) for row in infer_people(company_id)]
+    if not list_people(company_id):
+        infer_people(company_id)
+    people = list_people(company_id)
     evidence = list_evidence(company_id)
     relations: list[RelationRow] = []
     now = _now()
@@ -194,7 +209,11 @@ def rebuild_graph(company_id: str) -> dict:
 
 
 def financial_trends(company_id: str) -> dict:
-    rows = [row for row in list_evidence(company_id) if row.fact_type in {"accounts", "financial_metrics"}]
+    rows = [
+        row
+        for row in list_evidence(company_id)
+        if row.fact_type in {"accounts", "financial_metrics"}
+    ]
     metrics: dict[str, list[tuple[datetime, float, str]]] = defaultdict(list)
     aliases = {
         "turnover": ["turnover", "revenue"],
@@ -262,6 +281,10 @@ def tender_score(record: dict, profile: dict | None = None) -> dict:
     elif "award" in tags:
         score -= 20
         reasons.append("Record is already at award stage.")
+    deadline = record.get("deadline") or (record.get("raw") or {}).get("tender", {}).get("tenderPeriod", {}).get("endDate")
+    if deadline:
+        reasons.append(f"Published tender deadline: {deadline}.")
+        score += 5
     score = max(0.0, min(100.0, score))
     return {"score": round(score, 1), "reasons": reasons, "record": record}
 
@@ -287,11 +310,18 @@ def peer_anomalies(company_id: str) -> dict:
         deviation = pstdev(values)
         z = (value - avg) / deviation if deviation else 0.0
         if abs(z) >= 1.0:
-            anomalies.append({"signal": kind, "value": value, "peer_mean": avg, "z_score": round(z, 2)})
+            anomalies.append(
+                {"signal": kind, "value": value, "peer_mean": avg, "z_score": round(z, 2)}
+            )
     return {"company_id": company_id, "peer_count": len(peers), "anomalies": anomalies}
 
 
-def create_watchlist(name: str, company_ids: list[str], signal_kinds: list[str], minimum_strength: float = 0.5) -> dict:
+def create_watchlist(
+    name: str,
+    company_ids: list[str],
+    signal_kinds: list[str],
+    minimum_strength: float = 0.5,
+) -> dict:
     now = _now()
     row = WatchlistRow(
         id=str(uuid4()),
@@ -317,10 +347,9 @@ def evaluate_watchlists() -> list[dict]:
                     continue
                 if watchlist.signal_kinds and signal.kind not in watchlist.signal_kinds:
                     continue
-                alert_id = f"{watchlist.id}:{company_id}:{signal.kind}:{signal.id}"
                 alerts.append(
                     AlertRow(
-                        id=alert_id,
+                        id=f"{watchlist.id}:{company_id}:{signal.kind}:{signal.id}",
                         watchlist_id=watchlist.id,
                         company_id=company_id,
                         signal_kind=signal.kind,
@@ -356,6 +385,11 @@ def analyst(company_id: str, question: str) -> dict:
             if item["kind"] == "distress":
                 points.append(item.get("explanation") or "Distress signal detected.")
                 cited.extend(item.get("evidence_ids") or [])
+    elif any(word in question_lower for word in ("who", "contact", "decision maker", "director")):
+        people = list_people(company_id)
+        for person in people[:8]:
+            points.append(f"{person.name}: {person.role or 'role not stated'} ({person.role_family or 'unknown'}).")
+            cited.extend(person.evidence_ids)
     else:
         for item in sorted(signals, key=lambda row: row["strength"], reverse=True)[:5]:
             points.append(item.get("explanation") or item["kind"])
