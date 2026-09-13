@@ -42,6 +42,14 @@ def enrich_companies_house(
     number = company.company_number
     officers = client.officers(number, items_per_page=officers_limit)
     filings = client.filing_history(number, items_per_page=filings_limit)
+    try:
+        charges = client.charges(number)
+    except KeyError:
+        charges = {"items": []}
+    try:
+        insolvency = client.insolvency(number)
+    except KeyError:
+        insolvency = {}
     observed = _now()
     rows = [
         EvidenceRow(
@@ -66,12 +74,39 @@ def enrich_companies_house(
             confidence=1.0,
             raw_reference=number,
         ),
+        EvidenceRow(
+            id=_evidence_id("ch-charges", company_id, charges),
+            company_id=company_id,
+            source_id="companies-house",
+            fact_type="charges",
+            observed_at=observed,
+            source_url=f"{client.base_url}/company/{number}/charges",
+            value=charges,
+            confidence=1.0,
+            raw_reference=number,
+        ),
     ]
+    if insolvency:
+        rows.append(
+            EvidenceRow(
+                id=_evidence_id("ch-insolvency", company_id, insolvency),
+                company_id=company_id,
+                source_id="companies-house",
+                fact_type="insolvency",
+                observed_at=observed,
+                source_url=f"{client.base_url}/company/{number}/insolvency",
+                value=insolvency,
+                confidence=1.0,
+                raw_reference=number,
+            )
+        )
     _save_and_rescore(company_id, rows)
     return {
         "company_id": company_id,
         "officers": len(officers.get("items", [])),
         "filings": len(filings.get("items", [])),
+        "charges": len(charges.get("items", [])),
+        "insolvency": bool(insolvency),
     }
 
 
