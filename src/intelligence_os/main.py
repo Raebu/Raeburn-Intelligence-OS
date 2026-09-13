@@ -3,8 +3,8 @@ from __future__ import annotations
 import csv
 import io
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from . import __version__
 from .db import init_db
@@ -13,6 +13,7 @@ from .market import NomisClient
 from .models import Opportunity, OpportunityScoreRequest, SourceRecord
 from .procurement_api import router as procurement_router
 from .scoring import score_all, score_opportunity
+from .security import validate_operator_key
 from .service import (
     company_index,
     digital_twin,
@@ -35,6 +36,16 @@ app = FastAPI(
     ),
 )
 app.include_router(procurement_router)
+
+
+@app.middleware("http")
+async def protect_operator_actions(request: Request, call_next):
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        try:
+            validate_operator_key(request.headers.get("X-API-Key"))
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 
 @app.on_event("startup")
