@@ -111,7 +111,10 @@ SOURCES: list[SourceRecord] = [
         collection_method="catalogue",
         entity_types=["dataset"],
         supported_signals=[],
-        notes="Use for source discovery, never as blanket permission to ingest or redistribute linked data.",
+        notes=(
+            "Use for source discovery, never as blanket permission to ingest or redistribute "
+            "linked data."
+        ),
     ),
 ]
 
