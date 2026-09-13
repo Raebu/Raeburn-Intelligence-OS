@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
@@ -23,13 +24,24 @@ def _evidence_id(prefix: str, company_id: str, payload: Any) -> str:
     return f"{prefix}:{company_id}:{digest}"
 
 
-def enrich_companies_house(company_id: str, *, officers_limit: int = 100, filings_limit: int = 100) -> dict:
+def _save_and_rescore(company_id: str, rows: list[EvidenceRow]) -> None:
+    save_evidence(rows)
+    replace_signals(company_id, derive_signals(company_id, list_evidence(company_id)))
+
+
+def enrich_companies_house(
+    company_id: str,
+    *,
+    officers_limit: int = 100,
+    filings_limit: int = 100,
+) -> dict:
     company = get_company(company_id)
     if company is None or not company.company_number:
         raise KeyError(company_id)
     client = CompaniesHouseClient()
-    officers = client.officers(company.company_number, items_per_page=officers_limit)
-    filings = client.filing_history(company.company_number, items_per_page=filings_limit)
+    number = company.company_number
+    officers = client.officers(number, items_per_page=officers_limit)
+    filings = client.filing_history(number, items_per_page=filings_limit)
     observed = _now()
     rows = [
         EvidenceRow(
@@ -38,10 +50,10 @@ def enrich_companies_house(company_id: str, *, officers_limit: int = 100, filing
             source_id="companies-house",
             fact_type="officers",
             observed_at=observed,
-            source_url=f"{client.base_url}/company/{company.company_number}/officers",
+            source_url=f"{client.base_url}/company/{number}/officers",
             value=officers,
             confidence=1.0,
-            raw_reference=company.company_number,
+            raw_reference=number,
         ),
         EvidenceRow(
             id=_evidence_id("ch-filings", company_id, filings),
@@ -49,14 +61,13 @@ def enrich_companies_house(company_id: str, *, officers_limit: int = 100, filing
             source_id="companies-house",
             fact_type="filing_history",
             observed_at=observed,
-            source_url=f"{client.base_url}/company/{company.company_number}/filing-history",
+            source_url=f"{client.base_url}/company/{number}/filing-history",
             value=filings,
             confidence=1.0,
-            raw_reference=company.company_number,
+            raw_reference=number,
         ),
     ]
-    save_evidence(rows)
-    replace_signals(company_id, derive_signals(company_id, list_evidence(company_id)))
+    _save_and_rescore(company_id, rows)
     return {
         "company_id": company_id,
         "officers": len(officers.get("items", [])),
@@ -73,7 +84,7 @@ class TechnologyProfiler:
             follow_redirects=True,
         )
 
-    def profile(self, url: str) -> dict[str, Any]:
+    def _fetch(self, url: str) -> httpx.Response:
         parsed = urlparse(url)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("A valid http(s) URL is required")
@@ -82,6 +93,10 @@ class TechnologyProfiler:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise ExternalServiceError(f"Website returned {response.status_code}") from exc
+        return response
+
+    def profile(self, url: str) -> dict[str, Any]:
+        response = self._fetch(url)
         text = response.text[:1_000_000].lower()
         headers = {key.lower(): value for key, value in response.headers.items()}
         technologies: set[str] = set()
@@ -114,6 +129,36 @@ class TechnologyProfiler:
             "powered_by": headers.get("x-powered-by"),
         }
 
+    def careers(self, url: str) -> dict[str, Any]:
+        response = self._fetch(url)
+        html = response.text[:2_000_000]
+        text = re.sub(r"<[^>]+>", " ", html).lower()
+        role_terms = (
+            "engineer",
+            "developer",
+            "software",
+            "data scientist",
+            "data analyst",
+            "product manager",
+            "cyber",
+            "cloud",
+            "devops",
+            "machine learning",
+            "artificial intelligence",
+            "automation",
+        )
+        generic_terms = ("vacancy", "vacancies", "job", "jobs", "role", "roles", "position")
+        technology_job_count = sum(text.count(term) for term in role_terms)
+        generic_mentions = sum(text.count(term) for term in generic_terms)
+        estimated_jobs = min(250, max(technology_job_count, generic_mentions // 3))
+        return {
+            "requested_url": url,
+            "final_url": str(response.url),
+            "job_count": estimated_jobs,
+            "technology_job_count": technology_job_count,
+            "method": "public-careers-page-text-signals",
+        }
+
 
 def enrich_technology(company_id: str, url: str) -> dict:
     if get_company(company_id) is None:
@@ -130,6 +175,24 @@ def enrich_technology(company_id: str, url: str) -> dict:
         confidence=0.8,
         raw_reference=str(uuid4()),
     )
-    save_evidence([row])
-    replace_signals(company_id, derive_signals(company_id, list_evidence(company_id)))
+    _save_and_rescore(company_id, [row])
+    return profile
+
+
+def enrich_jobs(company_id: str, careers_url: str) -> dict:
+    if get_company(company_id) is None:
+        raise KeyError(company_id)
+    profile = TechnologyProfiler().careers(careers_url)
+    row = EvidenceRow(
+        id=f"job:{company_id}:{_now().isoformat()}",
+        company_id=company_id,
+        source_id="public-careers-page",
+        fact_type="job_scan",
+        observed_at=_now(),
+        source_url=profile["final_url"],
+        value=profile,
+        confidence=0.65,
+        raw_reference=str(uuid4()),
+    )
+    _save_and_rescore(company_id, [row])
     return profile
