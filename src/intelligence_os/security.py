@@ -7,7 +7,7 @@ from fastapi import Header, HTTPException
 from .config import get_settings
 
 
-def require_operator_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
+def validate_operator_key(value: str | None) -> None:
     settings = get_settings()
     configured = settings.api_key
     if not configured:
@@ -17,5 +17,9 @@ def require_operator_key(x_api_key: str | None = Header(default=None, alias="X-A
                 detail="Production write actions require RIOS_API_KEY to be configured",
             )
         return
-    if x_api_key is None or not secrets.compare_digest(x_api_key, configured):
+    if value is None or not secrets.compare_digest(value, configured):
         raise HTTPException(status_code=401, detail="Invalid or missing operator API key")
+
+
+def require_operator_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
+    validate_operator_key(x_api_key)
