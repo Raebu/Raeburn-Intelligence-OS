@@ -2,16 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from .advanced import (
-    capture_snapshot,
-    evaluate_watchlists,
-    infer_people,
-    propose_actions,
-    rebuild_graph,
-)
+from .accounts import enrich_latest_accounts
+from .advanced import capture_snapshot, evaluate_watchlists, infer_people, propose_actions
 from .config import get_settings
 from .db import init_db, list_companies
 from .enrichment import enrich_companies_house
+from .graph_engine import rebuild_enriched_graph
+from .ownership import enrich_ownership
 from .procurement import (
     attach_awards_to_indexed_companies,
     contracts_finder_feed,
@@ -32,6 +29,8 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
     settings = get_settings()
     refreshed = 0
     enriched = 0
+    ownership_enriched = 0
+    accounts_enriched = 0
     snapshots = 0
     graphs = 0
     proposed_actions = 0
@@ -47,8 +46,18 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
                 refreshed += 1
                 enrich_companies_house(fresh.id)
                 enriched += 1
+                try:
+                    enrich_ownership(fresh.id)
+                    ownership_enriched += 1
+                except (ExternalServiceError, KeyError):
+                    pass
+                try:
+                    enrich_latest_accounts(fresh.id)
+                    accounts_enriched += 1
+                except (ExternalServiceError, KeyError):
+                    pass
                 infer_people(fresh.id)
-                rebuild_graph(fresh.id)
+                rebuild_enriched_graph(fresh.id)
                 graphs += 1
             except (ExternalServiceError, KeyError, ValueError) as exc:
                 failures.append({"company": company.id, "error": str(exc)})
@@ -93,6 +102,8 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
         "companies_seen": len(companies),
         "companies_refreshed": refreshed,
         "companies_enriched": enriched,
+        "ownership_enriched": ownership_enriched,
+        "accounts_enriched": accounts_enriched,
         "snapshots_captured": snapshots,
         "graphs_rebuilt": graphs,
         "alerts_generated": len(alerts),
