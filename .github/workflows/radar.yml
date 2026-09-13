@@ -1,0 +1,34 @@
+name: Opportunity Radar
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RIOS_ENVIRONMENT: production
+      RIOS_DATABASE_URL: ${{ secrets.RIOS_DATABASE_URL }}
+      RIOS_COMPANIES_HOUSE_API_KEY: ${{ secrets.RIOS_COMPANIES_HOUSE_API_KEY }}
+      RIOS_NOMIS_UID: ${{ secrets.RIOS_NOMIS_UID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install .
+      - name: Run radar
+        shell: bash
+        run: |
+          if [ -z "$RIOS_DATABASE_URL" ]; then
+            echo "RIOS_DATABASE_URL is not configured; skipping persistent radar run."
+            exit 0
+          fi
+          python -m intelligence_os.radar
