@@ -194,7 +194,7 @@ def find_a_tender(
 def contracts_finder(
     published_from: str | None = None,
     published_to: str | None = None,
-    stage: list[str] | None = Query(default=None),
+    stage: list[str] | None = None,
     size: int = Query(default=100, ge=1, le=100),
     page: int = Query(default=1, ge=1),
 ) -> dict:
