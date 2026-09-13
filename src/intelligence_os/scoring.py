@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
-
 from .models import (
     Opportunity,
     OpportunityKind,
@@ -72,7 +70,6 @@ def _score_kind(kind: OpportunityKind, signals: list[SignalInput]) -> Opportunit
     weights = WEIGHTS[kind]
     components: list[ScoreComponent] = []
     weighted_sum = 0.0
-    available_weight = 0.0
     confidences: list[float] = []
     evidence_ids: set[str] = set()
 
@@ -89,7 +86,6 @@ def _score_kind(kind: OpportunityKind, signals: list[SignalInput]) -> Opportunit
             continue
         contribution = weight * signal.strength * signal.confidence
         weighted_sum += contribution
-        available_weight += weight
         confidences.append(signal.confidence)
         evidence_ids.update(signal.evidence_ids)
         components.append(
