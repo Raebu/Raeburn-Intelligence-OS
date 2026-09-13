@@ -24,7 +24,7 @@ from .service import (
 )
 from .sources import get_source, get_sources
 from .ui import DASHBOARD_HTML
-from .uk import ExternalServiceError
+from .uk import ContractsFinderClient, ExternalServiceError, FindATenderClient
 
 app = FastAPI(
     title="Raeburn Intelligence OS",
@@ -164,6 +164,46 @@ def nomis_datasets() -> object:
 def nomis_dataset_definition(dataset: str) -> object:
     try:
         return NomisClient().dataset_definition(dataset)
+    except ExternalServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/v1/procurement/find-a-tender")
+def find_a_tender(
+    updated_from: str | None = None,
+    updated_to: str | None = None,
+    stages: str | None = None,
+    limit: int = Query(default=100, ge=1, le=100),
+    cursor: str | None = None,
+) -> dict:
+    try:
+        return FindATenderClient().releases(
+            updated_from=updated_from,
+            updated_to=updated_to,
+            stages=stages,
+            limit=limit,
+            cursor=cursor,
+        )
+    except ExternalServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/v1/procurement/contracts-finder")
+def contracts_finder(
+    published_from: str | None = None,
+    published_to: str | None = None,
+    stage: list[str] | None = Query(default=None),
+    size: int = Query(default=100, ge=1, le=100),
+    page: int = Query(default=1, ge=1),
+) -> dict:
+    try:
+        return ContractsFinderClient().search(
+            published_from=published_from,
+            published_to=published_to,
+            stages=stage,
+            size=size,
+            page=page,
+        )
     except ExternalServiceError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
