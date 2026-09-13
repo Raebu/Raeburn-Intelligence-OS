@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     api_key: str | None = None
     companies_house_api_key: str | None = None
     companies_house_base_url: str = "https://api.company-information.service.gov.uk"
+    companies_house_document_base_url: str = (
+        "https://document-api.company-information.service.gov.uk"
+    )
     contracts_finder_base_url: str = (
         "https://www.contractsfinder.service.gov.uk/Published/Notices/OCDS/Search"
     )
@@ -23,7 +26,7 @@ class Settings(BaseSettings):
     nomis_uid: str | None = None
     request_timeout_seconds: float = 20.0
     user_agent: str = (
-        "Raeburn-Intelligence-OS/0.5 (+https://github.com/Raebu/Raeburn-Intelligence-OS)"
+        "Raeburn-Intelligence-OS/0.6 (+https://github.com/Raebu/Raeburn-Intelligence-OS)"
     )
 
 
