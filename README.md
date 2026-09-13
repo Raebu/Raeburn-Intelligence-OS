@@ -4,38 +4,34 @@
 
 Raeburn Intelligence OS converts fragmented public information into normalized entities, source evidence, explainable signals, ranked opportunities and recommended actions. Its first production vertical is **UK Company Opportunity Intelligence** for consulting, automation, recruitment, software, procurement, M&A and market-entry workflows.
 
-## Version 0.4.0
+## Version 0.5.0
 
-Version 0.4 expands the Company Digital Twin beyond the original company-profile layer:
+Version 0.5 adds a national procurement and autonomous-radar layer on top of the v0.4 Company Digital Twin:
 
-- Companies House company search, profile refresh and normalization;
-- Companies House officers and director-change intelligence;
-- filing-history monitoring and distress indicators;
-- charges and insolvency evidence for public financial-risk intelligence;
-- Contracts Finder OCDS connector;
-- Nomis labour-market API client, anonymous by default;
+- Companies House profiles, officers, filings, charges and insolvency evidence;
+- director-change, distress and public financial-risk signals;
 - public website technology profiling;
-- public careers-page scanning and historical hiring-change detection;
-- technology-hiring, hiring-growth, director-change, market-growth, distress, digital-transformation and automation-gap signals;
-- responsive operator dashboard at `/`;
-- FastAPI service and OpenAPI documentation at `/docs`;
-- SQLite persistence by default and PostgreSQL support for production;
-- immutable timestamped evidence records;
-- deterministic multi-product opportunity scoring;
-- Company Digital Twin endpoint;
-- ranked Opportunity Radar feed and CSV export;
-- Docker support and automated Ruff/pytest CI.
+- public careers-page scanning and historical hiring-growth detection;
+- Nomis labour-market integration;
+- documented Contracts Finder OCDS POST search support;
+- Find a Tender OCDS v1.1 release-package integration;
+- raw and normalized procurement endpoints;
+- public-contract award extraction and supplier matching by company number;
+- contract-award evidence linked back into indexed Company Digital Twins;
+- scheduled Opportunity Radar runner every six hours;
+- persistent-run protection: scheduled radar skips unless a production `RIOS_DATABASE_URL` is configured;
+- deterministic opportunity scoring, dashboard, CSV export, Docker and automated CI.
 
 ## Architecture
 
 ```text
-Companies House / Contracts Finder / Nomis / public company web pages
+Companies House / Find a Tender / Contracts Finder / Nomis / public company web pages
         ↓
 Source registry + licence/provenance controls
         ↓
-Connectors / discovery / enrichment
+Connectors / discovery / enrichment / scheduled radar
         ↓
-Normalized company entities
+Normalized company + procurement entities
         ↓
 Timestamped source evidence
         ↓
@@ -72,13 +68,15 @@ RIOS_COMPANIES_HOUSE_API_KEY=your-key
 
 Without the key, the service still starts and local intelligence remains accessible. Live Companies House endpoints explicitly report the missing credential rather than fabricating data.
 
-### Nomis
+### Persistent scheduled radar
 
-Nomis supports anonymous API use with its guest limits. For larger server-side requests you can optionally set:
+The scheduled GitHub Action runs every six hours. For it to retain intelligence between runs, configure a persistent PostgreSQL-compatible database through the repository secret:
 
 ```text
-RIOS_NOMIS_UID=your-uid
+RIOS_DATABASE_URL=postgresql+psycopg://...
 ```
+
+Optionally add `RIOS_COMPANIES_HOUSE_API_KEY` and `RIOS_NOMIS_UID` as repository secrets. If no persistent database URL exists, the scheduled workflow exits cleanly instead of creating disposable intelligence in a temporary SQLite database.
 
 ## Core endpoints
 
@@ -95,6 +93,12 @@ RIOS_NOMIS_UID=your-uid
 | `POST /v1/companies/{id}/enrich/jobs?careers_url=...` | Observe public hiring activity |
 | `GET /v1/market/nomis/datasets` | Browse Nomis datasets |
 | `GET /v1/market/nomis/{dataset}/definition` | Inspect a Nomis dataset definition |
+| `GET /v1/procurement/find-a-tender` | Raw Find a Tender OCDS feed |
+| `GET /v1/procurement/find-a-tender/normalized` | Normalized Find a Tender records |
+| `POST /v1/procurement/find-a-tender/link-awards` | Attach matching awards to indexed companies |
+| `GET /v1/procurement/contracts-finder` | Raw Contracts Finder OCDS results |
+| `GET /v1/procurement/contracts-finder/normalized` | Normalized Contracts Finder records |
+| `POST /v1/procurement/contracts-finder/link-awards` | Attach matching awards to indexed companies |
 | `GET /v1/companies/{id}/twin` | Full Company Digital Twin |
 | `GET /v1/opportunities` | Ranked Opportunity Radar |
 | `GET /v1/opportunities.csv` | Export opportunity feed |
@@ -107,7 +111,7 @@ RIOS_NOMIS_UID=your-uid
 
 Raw source observations are stored separately from interpretations. Current derived signals include public-contract activity, public-contract wins, distress, director change, digital transformation, automation gap, technology hiring, hiring growth and market growth.
 
-Hiring growth is only emitted when repeated careers-page observations show an increase. Website technology observations use only public HTML and response headers and do not bypass authentication, robots/access controls or private systems.
+Hiring growth is only emitted when repeated careers-page observations show an increase. Website technology observations use only public HTML and response headers and do not bypass authentication or private systems.
 
 Public financial intelligence is intentionally limited to defensible public records such as charges, insolvency information and filing-derived distress indicators. The system does not invent revenue, profit or private financial data.
 
