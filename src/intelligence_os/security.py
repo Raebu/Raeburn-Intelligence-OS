@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import secrets
+from typing import Annotated
 
 from fastapi import Header, HTTPException
 
@@ -21,5 +22,7 @@ def validate_operator_key(value: str | None) -> None:
         raise HTTPException(status_code=401, detail="Invalid or missing operator API key")
 
 
-def require_operator_key(x_api_key: str | None = Header(default=None, alias="X-API-Key")) -> None:
+def require_operator_key(
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> None:
     validate_operator_key(x_api_key)
