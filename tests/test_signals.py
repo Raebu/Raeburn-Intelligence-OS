@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from intelligence_os.signals import derive_signals
 from intelligence_os.db import EvidenceRow
+from intelligence_os.signals import derive_signals
 
 
 def test_derive_distress_signal():
@@ -32,3 +32,18 @@ def test_derive_digital_signal():
     ]
     signals = derive_signals("c1", evidence)
     assert any(signal.kind == "digital_transformation" for signal in signals)
+
+
+def test_derive_procurement_signal():
+    evidence = [
+        EvidenceRow(
+            id="p1",
+            company_id="c1",
+            source_id="contracts-finder",
+            fact_type="procurement_notice",
+            observed_at=datetime.now(),
+            value={"title": "Digital transformation programme"},
+        )
+    ]
+    signals = derive_signals("c1", evidence)
+    assert any(signal.kind == "procurement_activity" for signal in signals)
