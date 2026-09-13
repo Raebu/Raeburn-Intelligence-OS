@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "raeburn-intelligence-os"
-version = "0.4.0"
+version = "0.5.0"
 description = "Evidence-backed public intelligence and opportunity scoring for Raeburn Group products"
 readme = "README.md"
 requires-python = ">=3.11"
