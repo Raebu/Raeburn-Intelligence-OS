@@ -8,6 +8,8 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 
 from . import __version__
 from .db import init_db
+from .enrichment import enrich_companies_house, enrich_jobs, enrich_technology
+from .market import NomisClient
 from .models import Opportunity, OpportunityScoreRequest, SourceRecord
 from .scoring import score_all, score_opportunity
 from .service import (
@@ -112,6 +114,58 @@ def refresh(company_number: str) -> dict:
     except ExternalServiceError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return company.model_dump()
+
+
+@app.post("/v1/companies/{company_id}/enrich/companies-house")
+def companies_house_enrichment(company_id: str) -> dict:
+    try:
+        return enrich_companies_house(company_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Company not found") from exc
+    except ExternalServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/v1/companies/{company_id}/enrich/technology")
+def technology_enrichment(
+    company_id: str,
+    url: str = Query(min_length=8, max_length=2048),
+) -> dict:
+    try:
+        return enrich_technology(company_id, url)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Company not found") from exc
+    except (ExternalServiceError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/v1/companies/{company_id}/enrich/jobs")
+def jobs_enrichment(
+    company_id: str,
+    careers_url: str = Query(min_length=8, max_length=2048),
+) -> dict:
+    try:
+        return enrich_jobs(company_id, careers_url)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Company not found") from exc
+    except (ExternalServiceError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/v1/market/nomis/datasets")
+def nomis_datasets() -> object:
+    try:
+        return NomisClient().datasets()
+    except ExternalServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/v1/market/nomis/{dataset}/definition")
+def nomis_dataset_definition(dataset: str) -> object:
+    try:
+        return NomisClient().dataset_definition(dataset)
+    except ExternalServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/v1/companies/by-number/{company_number}")
