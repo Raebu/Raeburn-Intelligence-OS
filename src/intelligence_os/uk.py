@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -15,7 +15,7 @@ class ExternalServiceError(RuntimeError):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class CompaniesHouseClient:
@@ -39,7 +39,8 @@ class CompaniesHouseClient:
     def company_profile(self, company_number: str) -> dict[str, Any]:
         number = company_number.strip().upper()
         response = self.client.get(
-            f"{self.base_url}/company/{number}", headers=self._headers()
+            f"{self.base_url}/company/{number}",
+            headers=self._headers(),
         )
         if response.status_code == 404:
             raise KeyError(number)
@@ -55,7 +56,10 @@ class CompaniesHouseClient:
             params={"q": query, "items_per_page": min(max(items_per_page, 1), 100)},
             headers=self._headers(),
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise ExternalServiceError(f"Companies House returned {response.status_code}") from exc
         return list(response.json().get("items", []))
 
     def normalize(self, payload: dict[str, Any]) -> tuple[CompanyRow, list[EvidenceRow]]:
@@ -71,7 +75,7 @@ class CompaniesHouseClient:
             sic_codes=payload.get("sic_codes") or [],
             registered_address=payload.get("registered_office_address") or {},
             incorporated_at=(
-                datetime.fromisoformat(incorporated).replace(tzinfo=timezone.utc)
+                datetime.fromisoformat(incorporated).replace(tzinfo=UTC)
                 if incorporated
                 else None
             ),
