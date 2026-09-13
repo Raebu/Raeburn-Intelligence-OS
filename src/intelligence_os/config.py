@@ -15,11 +15,14 @@ class Settings(BaseSettings):
     contracts_finder_base_url: str = (
         "https://www.contractsfinder.service.gov.uk/Published/Notices/OCDS/Search"
     )
+    find_a_tender_base_url: str = (
+        "https://www.find-tender.service.gov.uk/api/1.0/ocdsReleasePackages"
+    )
     nomis_base_url: str = "https://www.nomisweb.co.uk/api/v01"
     nomis_uid: str | None = None
     request_timeout_seconds: float = 20.0
     user_agent: str = (
-        "Raeburn-Intelligence-OS/0.4 (+https://github.com/Raebu/Raeburn-Intelligence-OS)"
+        "Raeburn-Intelligence-OS/0.5 (+https://github.com/Raebu/Raeburn-Intelligence-OS)"
     )
 
 
