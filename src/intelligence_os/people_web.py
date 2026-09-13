@@ -21,39 +21,83 @@ ROLE_PATTERNS = {
     "finance": ["chief financial officer", "cfo", "finance director"],
 }
 
+ROLE_WORDS = {
+    "chief",
+    "executive",
+    "officer",
+    "technology",
+    "information",
+    "operating",
+    "operations",
+    "director",
+    "head",
+    "transformation",
+    "digital",
+    "people",
+    "talent",
+    "finance",
+    "financial",
+    "manager",
+}
+
 
 def _clean_html(html: str) -> str:
     text = re.sub(r"<script\b[^>]*>.*?</script>", " ", html, flags=re.I | re.S)
     text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.I | re.S)
+    text = re.sub(r"<(?:br|hr)\b[^>]*>", "\n", text, flags=re.I)
+    text = re.sub(r"</(?:div|p|li|section|article|h[1-6]|tr|td|th)\s*>", "\n", text, flags=re.I)
     text = re.sub(r"<[^>]+>", " ", text)
-    return re.sub(r"\s+", " ", unescape(text)).strip()
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in unescape(text).splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def _valid_name(value: str) -> bool:
+    parts = value.split()
+    if not 2 <= len(parts) <= 4:
+        return False
+    lowered = {part.lower().strip(".,:;()") for part in parts}
+    return not lowered.intersection(ROLE_WORDS)
 
 
 def extract_decision_makers(html: str) -> list[dict]:
     text = _clean_html(html)
     results: list[dict] = []
+    seen: set[tuple[str, str]] = set()
     name = r"[A-Z][A-Za-z'\-]+(?:\s+[A-Z][A-Za-z'\-]+){1,3}"
-    for family, roles in ROLE_PATTERNS.items():
-        for role in roles:
-            escaped = re.escape(role)
-            patterns = [
-                rf"(?P<name>{name})\s*[-–—,:|]\s*(?P<role>{escaped})\b",
-                rf"(?P<role>{escaped})\s*[-–—,:|]\s*(?P<name>{name})\b",
-                rf"(?P<name>{name})\s+(?:is\s+)?(?:the\s+)?(?P<role>{escaped})\b",
-            ]
-            for pattern in patterns:
-                for match in re.finditer(pattern, text, flags=re.I):
-                    person = match.group("name").strip()
-                    if len(person.split()) < 2:
+
+    for line in text.splitlines():
+        for family, roles in ROLE_PATTERNS.items():
+            family_match = False
+            for role in sorted(roles, key=len, reverse=True):
+                escaped = re.escape(role)
+                insensitive_role = rf"(?i:{escaped})"
+                patterns = [
+                    rf"(?P<name>{name})\s*[-–—,:|]\s*(?P<role>{insensitive_role})\b",
+                    rf"(?P<role>{insensitive_role})\s*[-–—,:|]\s*(?P<name>{name})\b",
+                    rf"(?P<name>{name})\s+(?:is\s+)?(?:the\s+)?(?P<role>{insensitive_role})\b",
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, line)
+                    if not match:
                         continue
-                    record = {
-                        "name": person,
-                        "role": role,
-                        "role_family": family,
-                        "confidence": 0.6,
-                    }
-                    if record not in results:
-                        results.append(record)
+                    person = match.group("name").strip()
+                    if not _valid_name(person):
+                        continue
+                    key = (person.lower(), role.lower())
+                    if key not in seen:
+                        seen.add(key)
+                        results.append(
+                            {
+                                "name": person,
+                                "role": role,
+                                "role_family": family,
+                                "confidence": 0.6,
+                            }
+                        )
+                    family_match = True
+                    break
+                if family_match:
+                    break
     return results[:50]
 
 
