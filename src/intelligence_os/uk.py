@@ -36,31 +36,49 @@ class CompaniesHouseClient:
         token = base64.b64encode(f"{self.api_key}:".encode()).decode()
         return {"Authorization": f"Basic {token}"}
 
-    def company_profile(self, company_number: str) -> dict[str, Any]:
-        number = company_number.strip().upper()
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         response = self.client.get(
-            f"{self.base_url}/company/{number}",
+            f"{self.base_url}{path}",
+            params=params,
             headers=self._headers(),
         )
         if response.status_code == 404:
-            raise KeyError(number)
+            raise KeyError(path)
         try:
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise ExternalServiceError(f"Companies House returned {response.status_code}") from exc
-        return response.json()
+        data = response.json()
+        return data if isinstance(data, dict) else {"items": data}
+
+    def company_profile(self, company_number: str) -> dict[str, Any]:
+        number = company_number.strip().upper()
+        return self._get(f"/company/{number}")
+
+    def officers(self, company_number: str, items_per_page: int = 100) -> dict[str, Any]:
+        number = company_number.strip().upper()
+        return self._get(
+            f"/company/{number}/officers",
+            params={"items_per_page": min(max(items_per_page, 1), 100)},
+        )
+
+    def filing_history(self, company_number: str, items_per_page: int = 100) -> dict[str, Any]:
+        number = company_number.strip().upper()
+        return self._get(
+            f"/company/{number}/filing-history",
+            params={"items_per_page": min(max(items_per_page, 1), 100)},
+        )
+
+    def insolvency(self, company_number: str) -> dict[str, Any]:
+        number = company_number.strip().upper()
+        return self._get(f"/company/{number}/insolvency")
 
     def search(self, query: str, items_per_page: int = 20) -> list[dict[str, Any]]:
-        response = self.client.get(
-            f"{self.base_url}/search/companies",
+        response = self._get(
+            "/search/companies",
             params={"q": query, "items_per_page": min(max(items_per_page, 1), 100)},
-            headers=self._headers(),
         )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise ExternalServiceError(f"Companies House returned {response.status_code}") from exc
-        return list(response.json().get("items", []))
+        return list(response.get("items", []))
 
     def normalize(self, payload: dict[str, Any]) -> tuple[CompanyRow, list[EvidenceRow]]:
         number = str(payload["company_number"]).upper()
