@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+from .advanced import (
+    capture_snapshot,
+    evaluate_watchlists,
+    infer_people,
+    propose_actions,
+    rebuild_graph,
+)
 from .config import get_settings
 from .db import init_db, list_companies
 from .enrichment import enrich_companies_house
@@ -25,6 +32,9 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
     settings = get_settings()
     refreshed = 0
     enriched = 0
+    snapshots = 0
+    graphs = 0
+    proposed_actions = 0
     failures: list[dict[str, str]] = []
 
     companies = list_companies(limit=company_limit)
@@ -37,7 +47,10 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
                 refreshed += 1
                 enrich_companies_house(fresh.id)
                 enriched += 1
-            except (ExternalServiceError, KeyError) as exc:
+                infer_people(fresh.id)
+                rebuild_graph(fresh.id)
+                graphs += 1
+            except (ExternalServiceError, KeyError, ValueError) as exc:
                 failures.append({"company": company.id, "error": str(exc)})
 
     start, end = _window(hours)
@@ -65,12 +78,25 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
     except ExternalServiceError as exc:
         procurement["contracts_finder"] = {"error": str(exc)}
 
+    for company in list_companies(limit=company_limit):
+        try:
+            capture_snapshot(company.id)
+            snapshots += 1
+            proposed_actions += len(propose_actions(company.id, minimum_score=70))
+        except (KeyError, TypeError, ValueError) as exc:
+            failures.append({"company": company.id, "error": str(exc)})
+
+    alerts = evaluate_watchlists()
     ranked = opportunity_feed(limit=company_limit)
     return {
         "window_hours": hours,
         "companies_seen": len(companies),
         "companies_refreshed": refreshed,
         "companies_enriched": enriched,
+        "snapshots_captured": snapshots,
+        "graphs_rebuilt": graphs,
+        "alerts_generated": len(alerts),
+        "actions_proposed": proposed_actions,
         "procurement": procurement,
         "opportunities_ranked": len(ranked),
         "top_opportunities": ranked[:25],
