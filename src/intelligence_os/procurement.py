@@ -4,8 +4,7 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
 
-from .db import get_company_by_number, list_evidence, replace_signals, save_evidence
-from .db import EvidenceRow
+from .db import EvidenceRow, get_company_by_number, list_evidence, replace_signals, save_evidence
 from .signals import derive_signals
 from .uk import ContractsFinderClient, FindATenderClient
 
