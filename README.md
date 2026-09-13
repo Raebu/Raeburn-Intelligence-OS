@@ -2,50 +2,56 @@
 
 **Evidence-backed public intelligence for companies, markets and commercial opportunities.**
 
-Raeburn Intelligence OS converts fragmented public information into normalized entities, source evidence, explainable signals, ranked opportunities and recommended actions. Its first production vertical is **UK Company Opportunity Intelligence** for consulting, automation, recruitment, software, procurement, M&A and market-entry workflows.
+Raeburn Intelligence OS converts fragmented public information into normalized entities, source evidence, explainable signals, ranked opportunities, relationship graphs and approval-gated commercial actions. Its first production vertical is **UK Company Opportunity Intelligence** for consulting, automation, recruitment, software, procurement, M&A and market-entry workflows.
 
-## Version 0.5.0
+## Version 0.6.0
 
-Version 0.5 adds a national procurement and autonomous-radar layer on top of the v0.4 Company Digital Twin:
+Version 0.6 turns the v0.5 radar into a compounding intelligence layer:
 
-- Companies House profiles, officers, filings, charges and insolvency evidence;
-- director-change, distress and public financial-risk signals;
-- public website technology profiling;
-- public careers-page scanning and historical hiring-growth detection;
-- Nomis labour-market integration;
-- documented Contracts Finder OCDS POST search support;
-- Find a Tender OCDS v1.1 release-package integration;
-- raw and normalized procurement endpoints;
-- public-contract award extraction and supplier matching by company number;
-- contract-award evidence linked back into indexed Company Digital Twins;
-- scheduled Opportunity Radar runner every six hours;
-- persistent-run protection: scheduled radar skips unless a production `RIOS_DATABASE_URL` is configured;
-- production operator-key protection for mutating API actions;
-- deterministic opportunity scoring, dashboard, CSV export, Docker and automated CI.
+- historical Company Digital Twin snapshots and field-level change detection;
+- persistent company/person/buyer/technology/SIC/ownership relationship graph;
+- Companies House officers and role-family decision-maker inference;
+- Companies House Persons with Significant Control enrichment;
+- Companies House Document API/iXBRL account-fact extraction for turnover, cash, net assets, liabilities and employee counts when those facts are present;
+- financial trend calculation from repeated public account observations;
+- tender fit scoring with service, value, buyer, lifecycle and deadline evidence;
+- sector-peer anomaly detection over observed signals;
+- persistent company watchlists and evidence-linked alerts;
+- evidence-grounded analyst answers that refuse unsupported conclusions;
+- approval-gated commercial action proposals rather than autonomous external side effects;
+- recorded commercial outcomes and outcome-based score calibration;
+- scheduled radar cycles that refresh, enrich, rebuild graphs, capture snapshots, evaluate watchlists and prepare high-confidence actions;
+- production operator-key protection for mutating API actions.
+
+The v0.5 capabilities remain: Companies House profile/officer/filing/charge/insolvency intelligence, website technology profiling, public careers-page hiring observations, Nomis labour-market access, Contracts Finder and Find a Tender OCDS feeds, procurement award matching, opportunity scoring, dashboard, CSV export, PostgreSQL support, Docker and CI.
 
 ## Architecture
 
 ```text
-Companies House / Find a Tender / Contracts Finder / Nomis / public company web pages
+Companies House + Document API / Find a Tender / Contracts Finder / Nomis / public web
         ↓
 Source registry + licence/provenance controls
         ↓
-Connectors / discovery / enrichment / scheduled radar
+Discovery / enrichment / scheduled radar
         ↓
-Normalized company + procurement entities
+Companies + people + owners + buyers + technology + procurement entities
         ↓
-Timestamped source evidence
+Immutable timestamped evidence + historical snapshots
+        ↓
+Knowledge graph + change detection + peer comparison
         ↓
 Evidence-derived signals
         ↓
-Explainable opportunity scoring
+Base opportunity scoring + outcome calibration
         ↓
-Company Digital Twin + Opportunity Radar
+Company Digital Twin + Opportunity Radar + grounded analyst
         ↓
-Dashboard / API / CSV / downstream Raeburn systems
+Watchlists / alerts / approval-gated action proposals
+        ↓
+Downstream Raeburn systems
 ```
 
-The system deliberately separates **facts**, **signals** and **commercial recommendations**. A score is never treated as a source fact, and every derived signal retains evidence IDs.
+Facts, interpretations and commercial actions remain deliberately separate. Every derived signal retains evidence IDs, analyst answers are restricted to stored evidence, and outcome learning adjusts ranking without overwriting the original deterministic score.
 
 ## Quick start
 
@@ -57,86 +63,115 @@ cp .env.example .env
 uvicorn intelligence_os.main:app --reload
 ```
 
-Open the dashboard at `http://127.0.0.1:8000/` or the interactive API at `http://127.0.0.1:8000/docs`.
+Open `http://127.0.0.1:8000/` for the operator dashboard or `/docs` for the interactive API.
 
-### Companies House live data
+## Configuration
 
-Set a Companies House API key:
+### Companies House
 
 ```text
 RIOS_COMPANIES_HOUSE_API_KEY=your-key
+RIOS_COMPANIES_HOUSE_BASE_URL=https://api.company-information.service.gov.uk
+RIOS_COMPANIES_HOUSE_DOCUMENT_BASE_URL=https://document-api.company-information.service.gov.uk
 ```
 
-Without the key, the service still starts and local intelligence remains accessible. Live Companies House endpoints explicitly report the missing credential rather than fabricating data.
+Without the API key the service still starts and stored intelligence remains accessible. Live Companies House and document endpoints fail explicitly rather than fabricating values.
 
 ### Production operator authentication
 
-Read-only intelligence endpoints can remain public. Mutating HTTP actions (`POST`, `PUT`, `PATCH`, `DELETE`) are protected by an operator key when configured:
+Read-only endpoints can remain public. Mutating HTTP actions are protected when an operator key is configured:
 
 ```text
 RIOS_API_KEY=generate-a-long-random-secret
 ```
 
-Send the value as the `X-API-Key` request header. Development remains open when no key is set. In `production`, write actions fail closed if `RIOS_API_KEY` is missing rather than silently becoming public.
+Send it as `X-API-Key`. Development remains open when no key is set. In `production`, write actions fail closed when the key is missing.
 
 ### Persistent scheduled radar
 
-The scheduled GitHub Action runs every six hours. For it to retain intelligence between runs, configure a persistent PostgreSQL-compatible database through the repository secret:
+The scheduled GitHub Action runs every six hours. Persistent operation requires a PostgreSQL-compatible database configured as a repository/runtime secret:
 
 ```text
 RIOS_DATABASE_URL=postgresql+psycopg://...
 ```
 
-Optionally add `RIOS_COMPANIES_HOUSE_API_KEY` and `RIOS_NOMIS_UID` as repository secrets. If no persistent database URL exists, the scheduled workflow exits cleanly instead of creating disposable intelligence in a temporary SQLite database.
+The scheduled workflow exits cleanly when no persistent database URL exists instead of creating disposable intelligence in a temporary SQLite database.
 
-## Core endpoints
+## Core API surface
+
+### Company intelligence
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /v1/status` | Store and integration readiness |
-| `GET /v1/sources` | Registered intelligence sources |
-| `GET /v1/companies` | Indexed company entities |
-| `GET /v1/discovery/companies?q=...` | Search Companies House |
-| `POST /v1/discovery/refresh?q=...` | Search and bulk-index matching companies |
-| `POST /v1/companies/{number}/refresh` | Refresh one company profile |
-| `POST /v1/companies/{id}/enrich/companies-house` | Add officers, filings, charges and insolvency evidence |
-| `POST /v1/companies/{id}/enrich/technology?url=...` | Profile public website technology |
-| `POST /v1/companies/{id}/enrich/jobs?careers_url=...` | Observe public hiring activity |
-| `GET /v1/market/nomis/datasets` | Browse Nomis datasets |
-| `GET /v1/market/nomis/{dataset}/definition` | Inspect a Nomis dataset definition |
-| `GET /v1/procurement/find-a-tender` | Raw Find a Tender OCDS feed |
+| `GET /v1/companies` | Indexed companies |
+| `GET /v1/discovery/companies?q=...` | Companies House discovery |
+| `POST /v1/discovery/refresh?q=...` | Bulk discovery/indexing |
+| `POST /v1/companies/{number}/refresh` | Refresh company profile |
+| `POST /v1/companies/{id}/enrich/companies-house` | Officers, filings, charges, insolvency |
+| `POST /v1/companies/{id}/ownership/enrich` | Persons with Significant Control |
+| `POST /v1/companies/{id}/accounts/enrich` | Extract public iXBRL account facts |
+| `POST /v1/companies/{id}/enrich/technology?url=...` | Public website technology profile |
+| `POST /v1/companies/{id}/enrich/jobs?careers_url=...` | Public hiring observation |
+| `GET /v1/companies/{id}/twin` | Company Digital Twin |
+| `POST /v1/companies/{id}/snapshots` | Capture historical Twin snapshot |
+| `GET /v1/companies/{id}/changes` | Compare two most recent snapshots |
+| `GET /v1/companies/{id}/financial-trends` | Public financial trend calculations |
+| `GET /v1/companies/{id}/anomalies` | Peer-relative signal anomalies |
+
+### People and knowledge graph
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /v1/companies/{id}/people/rebuild` | Infer evidence-backed people/role records |
+| `GET /v1/companies/{id}/people` | Company people index |
+| `POST /v1/companies/{id}/graph/rebuild` | Rebuild company graph including PSC/buyers/technology |
+| `GET /v1/graph/{entity_type}/{entity_id}` | Inspect graph relationships |
+
+### Procurement
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /v1/procurement/find-a-tender` | Raw Find a Tender OCDS |
 | `GET /v1/procurement/find-a-tender/normalized` | Normalized Find a Tender records |
-| `POST /v1/procurement/find-a-tender/link-awards` | Attach matching awards to indexed companies |
-| `GET /v1/procurement/contracts-finder` | Raw Contracts Finder OCDS results |
+| `POST /v1/procurement/find-a-tender/link-awards` | Match awards to indexed suppliers |
+| `GET /v1/procurement/contracts-finder` | Raw Contracts Finder OCDS |
 | `GET /v1/procurement/contracts-finder/normalized` | Normalized Contracts Finder records |
-| `POST /v1/procurement/contracts-finder/link-awards` | Attach matching awards to indexed companies |
-| `GET /v1/companies/{id}/twin` | Full Company Digital Twin |
-| `GET /v1/opportunities` | Ranked Opportunity Radar |
-| `GET /v1/opportunities.csv` | Export opportunity feed |
+| `POST /v1/procurement/contracts-finder/link-awards` | Match awards to indexed suppliers |
+| `POST /v1/procurement/score` | Evidence-based tender fit score |
+
+### Analyst, alerts and actions
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /v1/companies/{id}/analyst` | Ask evidence-grounded company questions |
+| `POST /v1/watchlists` | Create signal watchlist |
+| `POST /v1/watchlists/evaluate` | Generate alerts from current signals |
+| `GET /v1/alerts` | Alert feed |
+| `POST /v1/companies/{id}/actions/propose` | Prepare approval-gated commercial actions |
+| `POST /v1/actions/{action_id}/approve` | Approve prepared action |
+| `GET /v1/actions` | Action queue |
+| `POST /v1/outcomes` | Record conversation/proposal/win/loss outcome |
+| `GET /v1/feedback` | Commercial feedback summary |
+| `GET /v1/feedback/calibration` | Learned opportunity multipliers |
+| `GET /v1/companies/{id}/opportunities/calibrated` | Base scores plus outcome calibration |
+
+The action engine deliberately stops at preparation/approval. Sending outreach, writing to CRM systems or submitting bids remains a separately authorized downstream action.
 
 ## Opportunity families
 
 `automation`, `consulting`, `recruitment`, `software`, `procurement`, `ma`, and `market_entry`.
 
-## Evidence and signals
+## Evidence and source governance
 
-Raw source observations are stored separately from interpretations. Current derived signals include public-contract activity, public-contract wins, distress, director change, digital transformation, automation gap, technology hiring, hiring growth and market growth.
+Raw source observations are stored separately from interpretations. Public financial intelligence only uses defensible public records and extracted facts actually present in Companies House documents; missing revenue or profit is never invented.
 
-Hiring growth is only emitted when repeated careers-page observations show an increase. Website technology observations use only public HTML and response headers and do not bypass authentication or private systems.
+Website and careers-page intelligence uses public responses only and does not bypass authentication or private systems. The Awesome Public Datasets repository remains a discovery catalogue rather than blanket commercial permission: every downstream dataset requires its own licence and terms assessment.
 
-Public financial intelligence is intentionally limited to defensible public records such as charges, insolvency information and filing-derived distress indicators. The system does not invent revenue, profit or private financial data.
+Engineering rules: evidence before inference, no unsupported claims, raw facts separate from signals, traceable evidence IDs, retained historical snapshots, explicit credentials, and approval before external actions.
 
 ## Persistence
 
-Development defaults to `sqlite:///./raeburn_intelligence.db`. Production can use PostgreSQL through `RIOS_DATABASE_URL`.
-
-Historical evidence is retained so repeated observations become change signals and proprietary time-series intelligence.
-
-## Source governance
-
-Every registered source records its canonical URL, jurisdiction, licence status, refresh cadence, collection method, supported entity types and signals. The Awesome Public Datasets repository remains a discovery catalogue only; each linked dataset requires its own terms/licensing assessment before commercial ingestion or redistribution.
-
-Engineering rules remain: evidence before inference, no unsupported claims, raw facts separate from derived signals, traceable evidence IDs, no assumed commercial rights, retained history, and explicit credential failures.
+Development defaults to `sqlite:///./raeburn_intelligence.db`. Production can use PostgreSQL through `RIOS_DATABASE_URL`. Historical evidence, snapshots, graph records, watchlists, alerts, action proposals and outcomes are persistent tables.
 
 ## Development checks
 
