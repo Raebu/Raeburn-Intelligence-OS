@@ -1,0 +1,135 @@
+from __future__ import annotations
+
+import base64
+import re
+from datetime import UTC, datetime
+from hashlib import sha256
+from html import unescape
+from typing import Any
+
+import httpx
+
+from .config import get_settings
+from .db import EvidenceRow, get_company, list_evidence, save_evidence
+from .uk import ExternalServiceError
+
+FACT_ALIASES = {
+    "turnover": ("turnoverrevenue", "revenue", "turnover"),
+    "cash": ("cashbankonhand", "cashandcashequivalents", "cash"),
+    "net_assets": ("netassetsliabilities", "netassets"),
+    "liabilities": ("creditors", "totalliabilities"),
+    "employees": ("averagenumberemployeesduringperiod", "averageemployees", "employees"),
+}
+
+
+def _auth_header(api_key: str) -> str:
+    token = base64.b64encode(f"{api_key}:".encode()).decode()
+    return f"Basic {token}"
+
+
+def _number(text: str) -> float | None:
+    cleaned = unescape(re.sub(r"<[^>]+>", "", text)).strip()
+    negative = cleaned.startswith("(") and cleaned.endswith(")")
+    cleaned = cleaned.replace(",", "").replace("£", "").replace("(", "").replace(")", "")
+    match = re.search(r"-?\d+(?:\.\d+)?", cleaned)
+    if not match:
+        return None
+    value = float(match.group())
+    return -value if negative else value
+
+
+def extract_ixbrl_metrics(content: str) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    tags = re.findall(
+        r"<(?:ix:)?(?:nonfraction|nonnumeric)[^>]*name=[\"']([^\"']+)[\"'][^>]*>(.*?)</(?:ix:)?(?:nonfraction|nonnumeric)>",
+        content,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for fact_name, body in tags:
+        normalized = re.sub(r"[^a-z0-9]", "", fact_name.lower().split(":")[-1])
+        for metric, aliases in FACT_ALIASES.items():
+            if metric in metrics:
+                continue
+            if any(alias in normalized for alias in aliases):
+                value = _number(body)
+                if value is not None:
+                    metrics[metric] = value
+    return metrics
+
+
+def _latest_accounts_document(company_id: str) -> tuple[str, str] | None:
+    filing = next(
+        (row for row in list_evidence(company_id) if row.fact_type == "filing_history"),
+        None,
+    )
+    if not filing:
+        return None
+    for item in (filing.value or {}).get("items", []):
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category") or "").lower()
+        description = str(item.get("description") or "").lower()
+        if "account" not in category and "account" not in description:
+            continue
+        links = item.get("links") or {}
+        metadata = str(links.get("document_metadata") or "")
+        match = re.search(r"/document/([^/?]+)", metadata)
+        if match:
+            return match.group(1), str(item.get("date") or item.get("made_up_date") or "")
+    return None
+
+
+def enrich_latest_accounts(company_id: str) -> dict[str, Any]:
+    company = get_company(company_id)
+    if company is None:
+        raise KeyError(company_id)
+    document = _latest_accounts_document(company_id)
+    if document is None:
+        raise KeyError("No accounts filing with a document link is stored")
+    document_id, filing_date = document
+    settings = get_settings()
+    if not settings.companies_house_api_key:
+        raise ExternalServiceError("Companies House accounts access requires RIOS_COMPANIES_HOUSE_API_KEY")
+    headers = {
+        "Authorization": _auth_header(settings.companies_house_api_key),
+        "User-Agent": settings.user_agent,
+        "Accept": "application/xhtml+xml,application/xml,text/html;q=0.9,*/*;q=0.1",
+    }
+    url = f"{settings.companies_house_document_base_url.rstrip('/')}/document/{document_id}/content"
+    response = httpx.get(
+        url,
+        headers=headers,
+        timeout=settings.request_timeout_seconds,
+        follow_redirects=True,
+    )
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise ExternalServiceError(f"Companies House Document API returned {response.status_code}") from exc
+    metrics = extract_ixbrl_metrics(response.text)
+    payload = {
+        **metrics,
+        "document_id": document_id,
+        "filing_date": filing_date,
+        "extraction_method": "ixbrl-fact-alias-v1",
+    }
+    digest = sha256(repr(payload).encode()).hexdigest()[:20]
+    evidence = EvidenceRow(
+        id=f"ch-accounts:{company_id}:{digest}",
+        company_id=company_id,
+        source_id="companies-house-document-api",
+        fact_type="financial_metrics",
+        observed_at=datetime.now(UTC),
+        source_url=url,
+        value=payload,
+        confidence=0.9 if metrics else 0.5,
+        raw_reference=document_id,
+    )
+    save_evidence([evidence])
+    return {
+        "company_id": company_id,
+        "document_id": document_id,
+        "filing_date": filing_date,
+        "metrics": metrics,
+        "evidence_id": evidence.id,
+    }
