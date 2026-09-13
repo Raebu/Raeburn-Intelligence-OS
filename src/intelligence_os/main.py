@@ -11,6 +11,7 @@ from .db import init_db
 from .enrichment import enrich_companies_house, enrich_jobs, enrich_technology
 from .market import NomisClient
 from .models import Opportunity, OpportunityScoreRequest, SourceRecord
+from .procurement_api import router as procurement_router
 from .scoring import score_all, score_opportunity
 from .service import (
     company_index,
@@ -33,6 +34,7 @@ app = FastAPI(
         "Evidence-backed public intelligence, company digital twins and opportunity scoring."
     ),
 )
+app.include_router(procurement_router)
 
 
 @app.on_event("startup")
