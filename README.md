@@ -20,6 +20,7 @@ Version 0.5 adds a national procurement and autonomous-radar layer on top of the
 - contract-award evidence linked back into indexed Company Digital Twins;
 - scheduled Opportunity Radar runner every six hours;
 - persistent-run protection: scheduled radar skips unless a production `RIOS_DATABASE_URL` is configured;
+- production operator-key protection for mutating API actions;
 - deterministic opportunity scoring, dashboard, CSV export, Docker and automated CI.
 
 ## Architecture
@@ -67,6 +68,16 @@ RIOS_COMPANIES_HOUSE_API_KEY=your-key
 ```
 
 Without the key, the service still starts and local intelligence remains accessible. Live Companies House endpoints explicitly report the missing credential rather than fabricating data.
+
+### Production operator authentication
+
+Read-only intelligence endpoints can remain public. Mutating HTTP actions (`POST`, `PUT`, `PATCH`, `DELETE`) are protected by an operator key when configured:
+
+```text
+RIOS_API_KEY=generate-a-long-random-secret
+```
+
+Send the value as the `X-API-Key` request header. Development remains open when no key is set. In `production`, write actions fail closed if `RIOS_API_KEY` is missing rather than silently becoming public.
 
 ### Persistent scheduled radar
 
