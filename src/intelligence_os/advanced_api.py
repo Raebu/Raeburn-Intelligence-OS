@@ -23,6 +23,8 @@ from .advanced import (
     tender_score,
 )
 from .db import list_actions, list_alerts, list_people, list_watchlists
+from .ownership import enrich_ownership
+from .uk import ExternalServiceError
 
 router = APIRouter(prefix="/v1", tags=["advanced-intelligence"])
 
@@ -76,6 +78,16 @@ def people_rebuild(company_id: str) -> list[dict]:
 @router.get("/companies/{company_id}/people")
 def people(company_id: str) -> list[dict]:
     return [row.model_dump() for row in list_people(company_id)]
+
+
+@router.post("/companies/{company_id}/ownership/enrich")
+def ownership_enrich(company_id: str) -> dict:
+    try:
+        return enrich_ownership(company_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Company not found") from exc
+    except ExternalServiceError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/companies/{company_id}/graph/rebuild")
