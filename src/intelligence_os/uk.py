@@ -69,6 +69,13 @@ class CompaniesHouseClient:
             params={"items_per_page": min(max(items_per_page, 1), 100)},
         )
 
+    def charges(self, company_number: str, items_per_page: int = 100) -> dict[str, Any]:
+        number = company_number.strip().upper()
+        return self._get(
+            f"/company/{number}/charges",
+            params={"items_per_page": min(max(items_per_page, 1), 100)},
+        )
+
     def insolvency(self, company_number: str) -> dict[str, Any]:
         number = company_number.strip().upper()
         return self._get(f"/company/{number}/insolvency")
