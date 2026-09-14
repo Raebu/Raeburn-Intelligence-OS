@@ -18,8 +18,8 @@ jobs:
       RIOS_COMPANIES_HOUSE_API_KEY: ${{ secrets.RIOS_COMPANIES_HOUSE_API_KEY }}
       RIOS_NOMIS_UID: ${{ secrets.RIOS_NOMIS_UID }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install
