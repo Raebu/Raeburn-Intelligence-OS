@@ -2,6 +2,8 @@ name: Opportunity Radar
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
   schedule:
     - cron: "17 */6 * * *"
 
@@ -11,7 +13,7 @@ permissions:
 jobs:
   radar:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       RIOS_ENVIRONMENT: production
       RIOS_DATABASE_URL: ${{ secrets.RIOS_DATABASE_URL }}
