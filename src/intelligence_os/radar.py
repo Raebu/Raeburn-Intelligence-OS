@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 
 from .accounts import enrich_latest_accounts
@@ -20,6 +21,12 @@ def _window(hours: int) -> tuple[str, str]:
     return start.strftime("%Y-%m-%dT%H:%M:%S"), end.strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def _bootstrap_windows(requested_hours: int) -> list[int]:
+    # Empty production databases need enough history to find award suppliers carrying
+    # usable Companies House identifiers. Stop as soon as one window seeds companies.
+    return list(dict.fromkeys([max(requested_hours, 24), 168, 720, 2160]))
+
+
 def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
     init_db()
     settings = get_settings()
@@ -27,28 +34,56 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
     failures: list[dict[str, str]] = []
     companies = list_companies(limit=company_limit)
     initially_empty = not companies
-
-    # Procurement is also the zero-state discovery mechanism. On an empty database,
-    # recent award suppliers with valid Companies House numbers are verified against
-    # Companies House and become the first company index. No synthetic companies are created.
-    start, end = _window(hours)
     procurement: dict[str, object] = {}
-    try:
-        fts = find_a_tender_feed(updated_from=start, updated_to=end, stages="award", limit=100)
-        procurement["find_a_tender"] = attach_awards_to_indexed_companies(
-            fts, bootstrap_missing=initially_empty and bool(settings.companies_house_api_key)
-        )
-    except ExternalServiceError as exc:
-        procurement["find_a_tender"] = {"error": str(exc)}
-    try:
-        cf = contracts_finder_feed(published_from=start, published_to=end, stages=["award"], size=100, page=1)
-        procurement["contracts_finder"] = attach_awards_to_indexed_companies(
-            cf, bootstrap_missing=initially_empty and bool(settings.companies_house_api_key)
-        )
-    except ExternalServiceError as exc:
-        procurement["contracts_finder"] = {"error": str(exc)}
+    bootstrap_attempts: list[dict[str, object]] = []
 
-    companies = list_companies(limit=company_limit)
+    if initially_empty and not settings.companies_house_api_key:
+        raise RuntimeError(
+            "Production bootstrap requires RIOS_COMPANIES_HOUSE_API_KEY; refusing a green-but-empty radar run."
+        )
+
+    windows = _bootstrap_windows(hours) if initially_empty else [hours]
+    for window_hours in windows:
+        start, end = _window(window_hours)
+        attempt: dict[str, object] = {"window_hours": window_hours}
+        try:
+            fts = find_a_tender_feed(updated_from=start, updated_to=end, stages="award", limit=100)
+            result = attach_awards_to_indexed_companies(
+                fts, bootstrap_missing=initially_empty and bool(settings.companies_house_api_key)
+            )
+            procurement["find_a_tender"] = result
+            attempt["find_a_tender"] = result
+        except ExternalServiceError as exc:
+            error = {"error": str(exc)}
+            procurement["find_a_tender"] = error
+            attempt["find_a_tender"] = error
+
+        try:
+            cf = contracts_finder_feed(
+                published_from=start, published_to=end, stages=["award"], size=100, page=1
+            )
+            result = attach_awards_to_indexed_companies(
+                cf, bootstrap_missing=initially_empty and bool(settings.companies_house_api_key)
+            )
+            procurement["contracts_finder"] = result
+            attempt["contracts_finder"] = result
+        except ExternalServiceError as exc:
+            error = {"error": str(exc)}
+            procurement["contracts_finder"] = error
+            attempt["contracts_finder"] = error
+
+        companies = list_companies(limit=company_limit)
+        attempt["companies_after_attempt"] = len(companies)
+        bootstrap_attempts.append(attempt)
+        if companies:
+            break
+
+    if initially_empty and not companies:
+        raise RuntimeError(
+            "Radar bootstrap exhausted 24h/7d/30d/90d procurement windows without creating a verified company. "
+            f"Diagnostics: {bootstrap_attempts!r}"
+        )
+
     if settings.companies_house_api_key:
         for company in companies:
             if not company.company_number:
@@ -85,20 +120,30 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
     alerts = evaluate_watchlists()
     ranked = opportunity_feed(limit=company_limit)
     return {
-        "window_hours": hours, "bootstrap_mode": initially_empty,
-        "companies_seen": len(companies), "companies_refreshed": refreshed,
-        "companies_enriched": enriched, "ownership_enriched": ownership_enriched,
-        "accounts_enriched": accounts_enriched, "snapshots_captured": snapshots,
-        "graphs_rebuilt": graphs, "alerts_generated": len(alerts),
-        "actions_proposed": proposed_actions, "procurement": procurement,
-        "opportunities_ranked": len(ranked), "top_opportunities": ranked[:25],
+        "window_hours": hours,
+        "bootstrap_mode": initially_empty,
+        "bootstrap_attempts": bootstrap_attempts,
+        "companies_seen": len(companies),
+        "companies_refreshed": refreshed,
+        "companies_enriched": enriched,
+        "ownership_enriched": ownership_enriched,
+        "accounts_enriched": accounts_enriched,
+        "snapshots_captured": snapshots,
+        "graphs_rebuilt": graphs,
+        "alerts_generated": len(alerts),
+        "actions_proposed": proposed_actions,
+        "procurement": procurement,
+        "opportunities_ranked": len(ranked),
+        "top_opportunities": ranked[:25],
         "failures": failures,
     }
 
 
 def main() -> None:
     import json
-    print(json.dumps(run_radar(), default=str, indent=2))
+
+    result = run_radar(hours=int(os.getenv("RIOS_RADAR_WINDOW_HOURS", "24")))
+    print(json.dumps(result, default=str, indent=2))
 
 
 if __name__ == "__main__":
