@@ -120,3 +120,55 @@ def test_old_solvency_statement_is_not_distress():
         ],
     )
     assert not any(signal.kind == "distress" for signal in signals)
+
+
+def test_financial_history_creates_revenue_and_headcount_growth():
+    signals = derive_signals(
+        "c1",
+        [
+            _evidence(
+                "a2",
+                "financial_metrics",
+                {"filing_date": "2026-06-01", "turnover": 1500000, "employees": 30},
+            ),
+            _evidence(
+                "a1",
+                "financial_metrics",
+                {"filing_date": "2025-06-01", "turnover": 1000000, "employees": 20},
+            ),
+        ],
+    )
+    kinds = {signal.kind for signal in signals}
+    assert "revenue_growth" in kinds
+    assert "headcount_growth" in kinds
+
+
+def test_duplicate_contract_awards_are_counted_once():
+    signals = derive_signals(
+        "c1",
+        [
+            _evidence(
+                "c1",
+                "contract_award",
+                {
+                    "date": "2026-09-01",
+                    "title": "2026-049 Telephony Solutions for D&S",
+                    "buyer": {"name": "Ofgem"},
+                    "award_value": {"amount": 940000, "currency": "GBP"},
+                },
+            ),
+            _evidence(
+                "c2",
+                "contract_award",
+                {
+                    "date": "2026-09-01",
+                    "title": "Telephony Solutions",
+                    "buyer": {"name": "Ofgem"},
+                    "award_value": {"amount": 940000, "currency": "GBP"},
+                },
+            ),
+        ],
+    )
+    contract_signal = next(signal for signal in signals if signal.kind == "public_contract_win")
+    assert "1 deduplicated" in (contract_signal.explanation or "")
+    assert contract_signal.strength >= 0.7
