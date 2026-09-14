@@ -13,6 +13,7 @@ from .enrichment import enrich_companies_house, enrich_jobs, enrich_technology
 from .market import NomisClient
 from .models import Opportunity, OpportunityScoreRequest, SourceRecord
 from .procurement_api import router as procurement_router
+from .public_context_api import router as public_context_router
 from .scoring import score_all, score_opportunity
 from .security import validate_operator_key
 from .service import (
@@ -38,6 +39,7 @@ app = FastAPI(
 )
 app.include_router(procurement_router)
 app.include_router(advanced_router)
+app.include_router(public_context_router)
 
 
 @app.middleware("http")
