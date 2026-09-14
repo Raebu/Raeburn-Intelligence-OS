@@ -267,9 +267,6 @@ def list_relations(entity_type: str, entity_id: str) -> list[RelationRow]:
 
 def replace_people(company_id: str, rows: list[PersonRow]) -> None:
     with session_scope() as session:
-        # A bulk DELETE is intentionally flushed before INSERT. PostgreSQL otherwise
-        # may attempt to insert deterministic person IDs before ORM row deletions are
-        # issued, causing duplicate primary-key failures on repeated radar runs.
         session.exec(delete(PersonRow).where(PersonRow.company_id == company_id))
         session.flush()
         session.add_all(rows)
@@ -337,6 +334,14 @@ def save_action(row: ActionRow) -> ActionRow:
         session.commit()
         session.refresh(row)
         session.expunge(row)
+        return row
+
+
+def get_action(action_id: str) -> ActionRow | None:
+    with session_scope() as session:
+        row = session.get(ActionRow, action_id)
+        if row:
+            session.expunge(row)
         return row
 
 
