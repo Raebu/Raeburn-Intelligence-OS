@@ -10,7 +10,11 @@ from .db import init_db, list_companies
 from .enrichment import enrich_companies_house
 from .graph_engine import rebuild_enriched_graph
 from .ownership import enrich_ownership
-from .procurement import attach_awards_to_indexed_companies, contracts_finder_feed, find_a_tender_feed
+from .procurement import (
+    attach_awards_to_indexed_companies,
+    contracts_finder_feed,
+    find_a_tender_feed,
+)
 from .service import opportunity_feed, refresh_company
 from .uk import ExternalServiceError
 
