@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import uuid4
 
 from .db import EvidenceRow, SignalRow
@@ -34,6 +34,68 @@ def _items(row: EvidenceRow | None) -> list[dict]:
     value = row.value or {}
     items = value.get("items", []) if isinstance(value, dict) else []
     return [item for item in items if isinstance(item, dict)]
+
+
+def _parse_date(value: object) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _recent(value: object, now: datetime, days: int = 365) -> bool:
+    parsed = _parse_date(value)
+    if parsed is None:
+        return False
+    return now.date() - timedelta(days=days) <= parsed <= now.date()
+
+
+def _recent_distress_filings(items: list[dict], now: datetime) -> list[dict]:
+    distress_terms = (
+        "administration",
+        "administrator",
+        "liquidation",
+        "liquidator",
+        "winding-up",
+        "winding up",
+        "compulsory strike-off",
+        "gazette-notice-compulsary",
+        "gazette-notice-compulsory",
+        "receiver",
+        "receivership",
+        "creditors voluntary",
+        "cv01",
+    )
+    false_positive_terms = (
+        "solvency statement",
+        "capital reduction",
+        "reduction capital",
+        "filings brought up to date",
+        "gazette-filings-brought-up-to-date",
+    )
+    matches: list[dict] = []
+    for item in items:
+        if not _recent(item.get("date") or item.get("action_date"), now):
+            continue
+        description_values = item.get("description_values") or {}
+        extra = description_values.get("description", "") if isinstance(description_values, dict) else ""
+        text = " ".join(
+            str(part or "")
+            for part in (
+                item.get("category"),
+                item.get("description"),
+                item.get("type"),
+                item.get("subcategory"),
+                extra,
+            )
+        ).lower()
+        if any(term in text for term in false_positive_terms):
+            continue
+        if any(term in text for term in distress_terms):
+            matches.append(item)
+    return matches
 
 
 def derive_signals(company_id: str, evidence: list[EvidenceRow]) -> list[SignalRow]:
@@ -76,15 +138,27 @@ def derive_signals(company_id: str, evidence: list[EvidenceRow]) -> list[SignalR
 
     latest_officers = next((item for item in evidence if item.fact_type == "officers"), None)
     officer_items = _items(latest_officers)
-    resigned = [item for item in officer_items if item.get("resigned_on")]
-    if resigned and latest_officers:
+    recent_resigned = [
+        item for item in officer_items if _recent(item.get("resigned_on"), now)
+    ]
+    recent_appointed = [
+        item
+        for item in officer_items
+        if not item.get("resigned_on") and _recent(item.get("appointed_on"), now)
+    ]
+    recent_changes = len(recent_resigned) + len(recent_appointed)
+    if recent_changes and latest_officers:
         rows.append(
             _signal(
                 company_id,
                 SignalKind.DIRECTOR_CHANGE,
-                min(0.9, 0.35 + 0.08 * len(resigned)),
+                min(0.9, 0.35 + 0.08 * recent_changes),
                 0.95,
-                f"Companies House records {len(resigned)} resigned officer appointment(s).",
+                (
+                    "Companies House records "
+                    f"{len(recent_appointed)} recent officer appointment(s) and "
+                    f"{len(recent_resigned)} recent resignation(s) in the last 12 months."
+                ),
                 [latest_officers.id],
                 now,
             )
@@ -95,21 +169,22 @@ def derive_signals(company_id: str, evidence: list[EvidenceRow]) -> list[SignalR
         None,
     )
     filing_items = _items(latest_filings)
-    filing_text = " ".join(
-        f"{item.get('category', '')} {item.get('description', '')} {item.get('type', '')}".lower()
-        for item in filing_items[:100]
-    )
-    if latest_filings and any(
-        phrase in filing_text
-        for phrase in ("insolvency", "liquidation", "administration", "strike-off", "compulsory")
-    ):
+    distress_filings = _recent_distress_filings(filing_items, now)
+    if latest_filings and distress_filings:
+        newest = distress_filings[0]
+        detail = str(
+            newest.get("description")
+            or (newest.get("description_values") or {}).get("description")
+            or newest.get("type")
+            or "distress-related filing"
+        )
         rows.append(
             _signal(
                 company_id,
                 SignalKind.DISTRESS,
-                0.85,
+                min(0.95, 0.75 + 0.05 * len(distress_filings)),
                 0.9,
-                "Recent filing history contains a potential distress or insolvency indicator.",
+                f"Recent Companies House filing indicates potential distress: {detail}.",
                 [latest_filings.id],
                 now,
             )
