@@ -1,16 +1,21 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from intelligence_os.db import EvidenceRow
 from intelligence_os.signals import derive_signals
 
 
-def _evidence(identifier: str, fact_type: str, value: dict) -> EvidenceRow:
+def _evidence(
+    identifier: str,
+    fact_type: str,
+    value: dict,
+    observed_at: datetime | None = None,
+) -> EvidenceRow:
     return EvidenceRow(
         id=identifier,
         company_id="c1",
         source_id="test",
         fact_type=fact_type,
-        observed_at=datetime.now(),
+        observed_at=observed_at or datetime.now(UTC),
         value=value,
     )
 
@@ -65,8 +70,18 @@ def test_derive_technology_signal():
 
 def test_derive_tech_hiring_and_growth_signals():
     evidence = [
-        _evidence("j2", "job_scan", {"job_count": 12, "technology_job_count": 4}),
-        _evidence("j1", "job_scan", {"job_count": 5, "technology_job_count": 1}),
+        _evidence(
+            "j2",
+            "job_scan",
+            {"job_count": 12, "technology_job_count": 4},
+            datetime(2026, 9, 14, tzinfo=UTC),
+        ),
+        _evidence(
+            "j1",
+            "job_scan",
+            {"job_count": 5, "technology_job_count": 1},
+            datetime(2026, 8, 14, tzinfo=UTC),
+        ),
     ]
     signals = derive_signals("c1", evidence)
     kinds = {signal.kind for signal in signals}
