@@ -38,12 +38,14 @@ def normalize_release(release: dict[str, Any], source: str) -> dict[str, Any]:
         tags = [tags]
     suppliers: list[dict[str, Any]] = []
     award_value = None
+    award_date = None
     for award in awards:
         if not isinstance(award, dict):
             continue
         value = award.get("value") or {}
         if award_value is None and isinstance(value, dict):
             award_value = value
+        award_date = award_date or award.get("date") or award.get("contractPeriod", {}).get("startDate")
         for supplier in award.get("suppliers") or []:
             if isinstance(supplier, dict):
                 suppliers.append(supplier)
@@ -52,7 +54,7 @@ def normalize_release(release: dict[str, Any], source: str) -> dict[str, Any]:
         "source": source,
         "ocid": release.get("ocid"),
         "release_id": release.get("id"),
-        "date": release.get("date"),
+        "date": award_date or release.get("date"),
         "tags": tags,
         "title": tender.get("title") or release.get("title"),
         "description": tender.get("description") or release.get("description"),
@@ -119,7 +121,6 @@ def _company_number_from_supplier(supplier: dict[str, Any]) -> str | None:
     if direct:
         return direct
 
-    # Prefer identifiers explicitly declared as UK Companies House identifiers.
     for row in identifiers:
         scheme = str(row.get("scheme") or "").upper()
         if scheme in {"GB-COH", "GB-CHC", "UK-COH", "COH"}:
@@ -127,7 +128,6 @@ def _company_number_from_supplier(supplier: dict[str, Any]) -> str | None:
             if number:
                 return number
 
-    # Some UK procurement feeds omit the scheme but still publish the CH number as id.
     for row in identifiers:
         number = _valid_company_number(row.get("id"))
         if number:
@@ -161,11 +161,43 @@ def _resolve_supplier_by_name(supplier: dict[str, Any], client: CompaniesHouseCl
     return _valid_company_number(candidates[0].get("company_number"))
 
 
+def _tokens(value: object) -> set[str]:
+    words = re.findall(r"[a-z0-9]+", str(value or "").lower())
+    stop = {"the", "and", "for", "of", "to", "a", "an", "uk", "limited", "ltd", "plc", "llp"}
+    return {word for word in words if len(word) > 1 and word not in stop and not word.isdigit()}
+
+
+def _amount(payload: dict[str, Any]) -> float:
+    try:
+        return max(0.0, float((payload.get("award_value") or {}).get("amount") or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _duplicate_award(payload: dict[str, Any], existing: EvidenceRow) -> bool:
+    other = existing.value or {}
+    buyer = _tokens((payload.get("buyer") or {}).get("name"))
+    other_buyer = _tokens((other.get("buyer") or {}).get("name"))
+    if buyer and other_buyer and buyer != other_buyer:
+        return False
+    amount = _amount(payload)
+    other_amount = _amount(other)
+    if amount and other_amount and abs(amount - other_amount) > max(1.0, 0.005 * max(amount, other_amount)):
+        return False
+    title = _tokens(payload.get("title"))
+    other_title = _tokens(other.get("title"))
+    if not title or not other_title:
+        return amount > 0 and other_amount > 0 and buyer == other_buyer
+    overlap = len(title & other_title) / max(1, min(len(title), len(other_title)))
+    return overlap >= 0.6
+
+
 def attach_awards_to_indexed_companies(
     records: list[dict[str, Any]], *, bootstrap_missing: bool = False
 ) -> dict[str, int]:
     linked = 0
     awards = 0
+    duplicates_skipped = 0
     bootstrapped = 0
     bootstrap_failures = 0
     suppliers_seen = 0
@@ -215,11 +247,19 @@ def attach_awards_to_indexed_companies(
                 "source": record.get("source"),
                 "ocid": record.get("ocid"),
                 "release_id": record.get("release_id"),
+                "date": record.get("date"),
                 "title": record.get("title"),
                 "buyer": record.get("buyer"),
                 "award_value": record.get("award_value"),
                 "supplier": supplier,
             }
+            existing_awards = [
+                row for row in list_evidence(company.id) if row.fact_type == "contract_award"
+            ]
+            if any(_duplicate_award(payload, existing) for existing in existing_awards):
+                duplicates_skipped += 1
+                continue
+
             digest = sha256(repr(payload).encode()).hexdigest()[:20]
             row = EvidenceRow(
                 id=f"procurement-award:{company.id}:{digest}",
@@ -245,6 +285,7 @@ def attach_awards_to_indexed_companies(
         "unresolved_suppliers": unresolved_suppliers,
         "linked_companies": linked,
         "awards_attached": awards,
+        "duplicates_skipped": duplicates_skipped,
         "companies_bootstrapped": bootstrapped,
         "bootstrap_failures": bootstrap_failures,
     }
