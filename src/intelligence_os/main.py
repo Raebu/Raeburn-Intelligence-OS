@@ -10,6 +10,7 @@ from . import __version__
 from .advanced_api import router as advanced_router
 from .db import init_db
 from .enrichment import enrich_companies_house, enrich_jobs, enrich_technology
+from .extended_context_api import router as extended_context_router
 from .market import NomisClient
 from .models import Opportunity, OpportunityScoreRequest, SourceRecord
 from .procurement_api import router as procurement_router
@@ -30,16 +31,11 @@ from .sources import get_source, get_sources
 from .ui import DASHBOARD_HTML
 from .uk import ContractsFinderClient, ExternalServiceError, FindATenderClient
 
-app = FastAPI(
-    title="Raeburn Intelligence OS",
-    version=__version__,
-    description=(
-        "Evidence-backed public intelligence, company digital twins and opportunity scoring."
-    ),
-)
+app = FastAPI(title="Raeburn Intelligence OS", version=__version__, description="Evidence-backed public intelligence, company digital twins and opportunity scoring.")
 app.include_router(procurement_router)
 app.include_router(advanced_router)
 app.include_router(public_context_router)
+app.include_router(extended_context_router)
 
 
 @app.middleware("http")
@@ -91,10 +87,7 @@ def companies(limit: int = Query(default=100, ge=1, le=1000)) -> list[dict]:
 
 
 @app.get("/v1/discovery/companies")
-def discovery_search(
-    q: str = Query(min_length=2, max_length=200),
-    limit: int = Query(default=20, ge=1, le=100),
-) -> list[dict]:
+def discovery_search(q: str = Query(min_length=2, max_length=200), limit: int = Query(default=20, ge=1, le=100)) -> list[dict]:
     try:
         return discover_companies(q, limit=limit)
     except ExternalServiceError as exc:
@@ -102,10 +95,7 @@ def discovery_search(
 
 
 @app.post("/v1/discovery/refresh")
-def discovery_refresh(
-    q: str = Query(min_length=2, max_length=200),
-    limit: int = Query(default=10, ge=1, le=50),
-) -> dict:
+def discovery_refresh(q: str = Query(min_length=2, max_length=200), limit: int = Query(default=10, ge=1, le=50)) -> dict:
     try:
         return discover_and_refresh(q, limit=limit)
     except ExternalServiceError as exc:
@@ -125,12 +115,11 @@ def score_every_kind(request: OpportunityScoreRequest) -> list[Opportunity]:
 @app.post("/v1/companies/{company_number}/refresh")
 def refresh(company_number: str) -> dict:
     try:
-        company = refresh_company(company_number)
+        return refresh_company(company_number).model_dump()
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Company not found") from exc
     except ExternalServiceError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return company.model_dump()
 
 
 @app.post("/v1/companies/{company_id}/enrich/companies-house")
@@ -144,10 +133,7 @@ def companies_house_enrichment(company_id: str) -> dict:
 
 
 @app.post("/v1/companies/{company_id}/enrich/technology")
-def technology_enrichment(
-    company_id: str,
-    url: str = Query(min_length=8, max_length=2048),
-) -> dict:
+def technology_enrichment(company_id: str, url: str = Query(min_length=8, max_length=2048)) -> dict:
     try:
         return enrich_technology(company_id, url)
     except KeyError as exc:
@@ -157,10 +143,7 @@ def technology_enrichment(
 
 
 @app.post("/v1/companies/{company_id}/enrich/jobs")
-def jobs_enrichment(
-    company_id: str,
-    careers_url: str = Query(min_length=8, max_length=2048),
-) -> dict:
+def jobs_enrichment(company_id: str, careers_url: str = Query(min_length=8, max_length=2048)) -> dict:
     try:
         return enrich_jobs(company_id, careers_url)
     except KeyError as exc:
@@ -186,41 +169,17 @@ def nomis_dataset_definition(dataset: str) -> object:
 
 
 @app.get("/v1/procurement/find-a-tender")
-def find_a_tender(
-    updated_from: str | None = None,
-    updated_to: str | None = None,
-    stages: str | None = None,
-    limit: int = Query(default=100, ge=1, le=100),
-    cursor: str | None = None,
-) -> dict:
+def find_a_tender(updated_from: str | None = None, updated_to: str | None = None, stages: str | None = None, limit: int = Query(default=100, ge=1, le=100), cursor: str | None = None) -> dict:
     try:
-        return FindATenderClient().releases(
-            updated_from=updated_from,
-            updated_to=updated_to,
-            stages=stages,
-            limit=limit,
-            cursor=cursor,
-        )
+        return FindATenderClient().releases(updated_from=updated_from, updated_to=updated_to, stages=stages, limit=limit, cursor=cursor)
     except ExternalServiceError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.get("/v1/procurement/contracts-finder")
-def contracts_finder(
-    published_from: str | None = None,
-    published_to: str | None = None,
-    stage: list[str] | None = None,
-    size: int = Query(default=100, ge=1, le=100),
-    page: int = Query(default=1, ge=1),
-) -> dict:
+def contracts_finder(published_from: str | None = None, published_to: str | None = None, stage: list[str] | None = None, size: int = Query(default=100, ge=1, le=100), page: int = Query(default=1, ge=1)) -> dict:
     try:
-        return ContractsFinderClient().search(
-            published_from=published_from,
-            published_to=published_to,
-            stages=stage,
-            size=size,
-            page=page,
-        )
+        return ContractsFinderClient().search(published_from=published_from, published_to=published_to, stages=stage, size=size, page=page)
     except ExternalServiceError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -229,8 +188,7 @@ def contracts_finder(
 def company_by_number(company_number: str) -> dict:
     company = resolve_company_number(company_number.upper())
     if company is None:
-        detail = "Company not found in local intelligence store"
-        raise HTTPException(status_code=404, detail=detail)
+        raise HTTPException(status_code=404, detail="Company not found in local intelligence store")
     return company.model_dump()
 
 
@@ -251,22 +209,9 @@ def read_opportunity_feed(limit: int = Query(default=100, ge=1, le=1000)) -> lis
 def export_opportunities(limit: int = Query(default=1000, ge=1, le=10000)) -> StreamingResponse:
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(
-        ["score", "confidence", "type", "company", "company_number", "recommended_action"]
-    )
+    writer.writerow(["score", "confidence", "type", "company", "company_number", "recommended_action"])
     for row in opportunity_feed(limit=limit):
         company = row["company"]
         opportunity = row["opportunity"]
-        writer.writerow(
-            [
-                opportunity["score"],
-                opportunity["confidence"],
-                opportunity["kind"],
-                company["name"],
-                company["company_number"],
-                opportunity["recommended_action"],
-            ]
-        )
-    body = output.getvalue()
-    headers = {"Content-Disposition": "attachment; filename=raeburn-opportunities.csv"}
-    return StreamingResponse(iter([body]), media_type="text/csv", headers=headers)
+        writer.writerow([opportunity["score"], opportunity["confidence"], opportunity["kind"], company["name"], company["company_number"], opportunity["recommended_action"]])
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=raeburn-opportunities.csv"})
