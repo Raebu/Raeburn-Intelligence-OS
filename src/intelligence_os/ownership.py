@@ -20,8 +20,9 @@ def enrich_ownership(company_id: str) -> dict:
     )
     observed = datetime.now(UTC)
     digest = sha256(repr(payload).encode()).hexdigest()[:20]
+    evidence_id = f"ch-psc:{company_id}:{digest}"
     row = EvidenceRow(
-        id=f"ch-psc:{company_id}:{digest}",
+        id=evidence_id,
         company_id=company_id,
         source_id="companies-house",
         fact_type="persons_with_significant_control",
@@ -39,5 +40,5 @@ def enrich_ownership(company_id: str) -> dict:
     return {
         "company_id": company_id,
         "persons_with_significant_control": len(items),
-        "evidence_id": row.id,
+        "evidence_id": evidence_id,
     }
