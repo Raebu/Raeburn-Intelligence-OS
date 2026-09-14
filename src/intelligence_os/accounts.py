@@ -57,13 +57,12 @@ def extract_ixbrl_metrics(content: str) -> dict[str, float]:
     return metrics
 
 
-def _latest_accounts_document(company_id: str) -> tuple[str, str] | None:
-    filing = next(
-        (row for row in list_evidence(company_id) if row.fact_type == "filing_history"),
-        None,
-    )
+def _accounts_documents(company_id: str, limit: int = 2) -> list[tuple[str, str]]:
+    filing = next((row for row in list_evidence(company_id) if row.fact_type == "filing_history"), None)
     if not filing:
-        return None
+        return []
+    documents: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for item in (filing.value or {}).get("items", []):
         if not isinstance(item, dict):
             continue
@@ -74,19 +73,35 @@ def _latest_accounts_document(company_id: str) -> tuple[str, str] | None:
         links = item.get("links") or {}
         metadata = str(links.get("document_metadata") or "")
         match = re.search(r"/document/([^/?]+)", metadata)
-        if match:
-            return match.group(1), str(item.get("date") or item.get("made_up_date") or "")
-    return None
+        if not match:
+            continue
+        document_id = match.group(1)
+        if document_id in seen:
+            continue
+        seen.add(document_id)
+        documents.append((document_id, str(item.get("date") or item.get("made_up_date") or "")))
+        if len(documents) >= limit:
+            break
+    return documents
+
+
+def _fetch_metrics(document_id: str, headers: dict[str, str], base_url: str, timeout: float) -> tuple[str, dict[str, float]]:
+    url = f"{base_url.rstrip('/')}/document/{document_id}/content"
+    response = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise ExternalServiceError(f"Companies House Document API returned {response.status_code}") from exc
+    return url, extract_ixbrl_metrics(response.text)
 
 
 def enrich_latest_accounts(company_id: str) -> dict[str, Any]:
     company = get_company(company_id)
     if company is None:
         raise KeyError(company_id)
-    document = _latest_accounts_document(company_id)
-    if document is None:
+    documents = _accounts_documents(company_id, limit=2)
+    if not documents:
         raise KeyError("No accounts filing with a document link is stored")
-    document_id, filing_date = document
     settings = get_settings()
     if not settings.companies_house_api_key:
         raise ExternalServiceError("Companies House accounts access requires RIOS_COMPANIES_HOUSE_API_KEY")
@@ -95,42 +110,51 @@ def enrich_latest_accounts(company_id: str) -> dict[str, Any]:
         "User-Agent": settings.user_agent,
         "Accept": "application/xhtml+xml,application/xml,text/html;q=0.9,*/*;q=0.1",
     }
-    url = f"{settings.companies_house_document_base_url.rstrip('/')}/document/{document_id}/content"
-    response = httpx.get(
-        url,
-        headers=headers,
-        timeout=settings.request_timeout_seconds,
-        follow_redirects=True,
-    )
-    try:
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        raise ExternalServiceError(f"Companies House Document API returned {response.status_code}") from exc
-    metrics = extract_ixbrl_metrics(response.text)
-    payload = {
-        **metrics,
-        "document_id": document_id,
-        "filing_date": filing_date,
-        "extraction_method": "ixbrl-fact-alias-v1",
-    }
-    digest = sha256(repr(payload).encode()).hexdigest()[:20]
-    evidence_id = f"ch-accounts:{company_id}:{digest}"
-    evidence = EvidenceRow(
-        id=evidence_id,
-        company_id=company_id,
-        source_id="companies-house-document-api",
-        fact_type="financial_metrics",
-        observed_at=datetime.now(UTC),
-        source_url=url,
-        value=payload,
-        confidence=0.9 if metrics else 0.5,
-        raw_reference=document_id,
-    )
-    save_evidence([evidence])
+
+    saved: list[dict[str, Any]] = []
+    for document_id, filing_date in documents:
+        url, metrics = _fetch_metrics(
+            document_id,
+            headers,
+            settings.companies_house_document_base_url,
+            settings.request_timeout_seconds,
+        )
+        payload = {
+            **metrics,
+            "document_id": document_id,
+            "filing_date": filing_date,
+            "extraction_method": "ixbrl-fact-alias-v1",
+        }
+        digest = sha256(repr(payload).encode()).hexdigest()[:20]
+        evidence_id = f"ch-accounts:{company_id}:{digest}"
+        evidence = EvidenceRow(
+            id=evidence_id,
+            company_id=company_id,
+            source_id="companies-house-document-api",
+            fact_type="financial_metrics",
+            observed_at=datetime.now(UTC),
+            source_url=url,
+            value=payload,
+            confidence=0.9 if metrics else 0.5,
+            raw_reference=document_id,
+        )
+        save_evidence([evidence])
+        saved.append(
+            {
+                "document_id": document_id,
+                "filing_date": filing_date,
+                "metrics": metrics,
+                "evidence_id": evidence_id,
+            }
+        )
+
+    latest = saved[0]
     return {
         "company_id": company_id,
-        "document_id": document_id,
-        "filing_date": filing_date,
-        "metrics": metrics,
-        "evidence_id": evidence_id,
+        "document_id": latest["document_id"],
+        "filing_date": latest["filing_date"],
+        "metrics": latest["metrics"],
+        "evidence_id": latest["evidence_id"],
+        "documents_ingested": len(saved),
+        "history": saved,
     }
