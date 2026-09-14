@@ -100,28 +100,20 @@ def calibration_readiness(labels: list[dict[str, Any]]) -> dict[str, Any]:
         counts[tier] += 1
         outcome = label.get("outcome")
         if tier == "gold_terminal":
-            if outcome in {1, True}:
+            if outcome == 1:
                 gold_positive += 1
-            elif outcome in {0, False}:
+            elif outcome == 0:
                 gold_negative += 1
         elif tier == "observed":
-            if outcome in {1, True}:
+            if outcome == 1:
                 observed_positive += 1
-            elif outcome in {0, False}:
+            elif outcome == 0:
                 observed_negative += 1
 
     gold_terminal = gold_positive + gold_negative
     observed_total = observed_positive + observed_negative
-    commercial_ready = (
-        gold_terminal >= 100
-        and gold_positive >= 30
-        and gold_negative >= 30
-    )
-    event_ready = (
-        observed_total >= 500
-        and observed_positive >= 50
-        and observed_negative >= 50
-    )
+    commercial_ready = gold_terminal >= 100 and gold_positive >= 30 and gold_negative >= 30
+    event_ready = observed_total >= 500 and observed_positive >= 50 and observed_negative >= 50
 
     if commercial_ready and event_ready:
         mode = "empirically_calibrated"
@@ -159,7 +151,7 @@ def empirical_calibration(rows: list[dict[str, Any]], bins: int = 10) -> dict[st
     for row in rows:
         probability = row.get("probability")
         outcome = row.get("outcome")
-        if not isinstance(probability, (int, float)) or outcome not in {0, 1, False, True}:
+        if not isinstance(probability, (int, float)) or outcome not in {0, 1}:
             continue
         probability = max(0.0, min(1.0, float(probability)))
         tier = str(row.get("label_class") or row.get("tier") or "observed")
@@ -254,8 +246,7 @@ def observed_event_labels(
         future = [
             signal
             for signal in signals
-            if signal.kind in signal_kinds
-            and cutoff < _aware(signal.detected_at) <= horizon
+            if signal.kind in signal_kinds and cutoff < _aware(signal.detected_at) <= horizon
         ]
         labels.append(
             {
