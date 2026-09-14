@@ -114,8 +114,9 @@ def enrich_latest_accounts(company_id: str) -> dict[str, Any]:
         "extraction_method": "ixbrl-fact-alias-v1",
     }
     digest = sha256(repr(payload).encode()).hexdigest()[:20]
+    evidence_id = f"ch-accounts:{company_id}:{digest}"
     evidence = EvidenceRow(
-        id=f"ch-accounts:{company_id}:{digest}",
+        id=evidence_id,
         company_id=company_id,
         source_id="companies-house-document-api",
         fact_type="financial_metrics",
@@ -131,5 +132,5 @@ def enrich_latest_accounts(company_id: str) -> dict[str, Any]:
         "document_id": document_id,
         "filing_date": filing_date,
         "metrics": metrics,
-        "evidence_id": evidence.id,
+        "evidence_id": evidence_id,
     }
