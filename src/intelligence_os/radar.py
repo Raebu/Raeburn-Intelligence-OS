@@ -9,11 +9,7 @@ from .db import init_db, list_companies
 from .enrichment import enrich_companies_house
 from .graph_engine import rebuild_enriched_graph
 from .ownership import enrich_ownership
-from .procurement import (
-    attach_awards_to_indexed_companies,
-    contracts_finder_feed,
-    find_a_tender_feed,
-)
+from .procurement import attach_awards_to_indexed_companies, contracts_finder_feed, find_a_tender_feed
 from .service import opportunity_feed, refresh_company
 from .uk import ExternalServiceError
 
@@ -27,14 +23,30 @@ def _window(hours: int) -> tuple[str, str]:
 def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
     init_db()
     settings = get_settings()
-    refreshed = 0
-    enriched = 0
-    ownership_enriched = 0
-    accounts_enriched = 0
-    snapshots = 0
-    graphs = 0
-    proposed_actions = 0
+    refreshed = enriched = ownership_enriched = accounts_enriched = snapshots = graphs = proposed_actions = 0
     failures: list[dict[str, str]] = []
+    companies = list_companies(limit=company_limit)
+    initially_empty = not companies
+
+    # Procurement is also the zero-state discovery mechanism. On an empty database,
+    # recent award suppliers with valid Companies House numbers are verified against
+    # Companies House and become the first company index. No synthetic companies are created.
+    start, end = _window(hours)
+    procurement: dict[str, object] = {}
+    try:
+        fts = find_a_tender_feed(updated_from=start, updated_to=end, stages="award", limit=100)
+        procurement["find_a_tender"] = attach_awards_to_indexed_companies(
+            fts, bootstrap_missing=initially_empty and bool(settings.companies_house_api_key)
+        )
+    except ExternalServiceError as exc:
+        procurement["find_a_tender"] = {"error": str(exc)}
+    try:
+        cf = contracts_finder_feed(published_from=start, published_to=end, stages=["award"], size=100, page=1)
+        procurement["contracts_finder"] = attach_awards_to_indexed_companies(
+            cf, bootstrap_missing=initially_empty and bool(settings.companies_house_api_key)
+        )
+    except ExternalServiceError as exc:
+        procurement["contracts_finder"] = {"error": str(exc)}
 
     companies = list_companies(limit=company_limit)
     if settings.companies_house_api_key:
@@ -62,31 +74,6 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
             except (ExternalServiceError, KeyError, ValueError) as exc:
                 failures.append({"company": company.id, "error": str(exc)})
 
-    start, end = _window(hours)
-    procurement: dict[str, object] = {}
-    try:
-        fts = find_a_tender_feed(
-            updated_from=start,
-            updated_to=end,
-            stages="award",
-            limit=100,
-        )
-        procurement["find_a_tender"] = attach_awards_to_indexed_companies(fts)
-    except ExternalServiceError as exc:
-        procurement["find_a_tender"] = {"error": str(exc)}
-
-    try:
-        cf = contracts_finder_feed(
-            published_from=start,
-            published_to=end,
-            stages=["award"],
-            size=100,
-            page=1,
-        )
-        procurement["contracts_finder"] = attach_awards_to_indexed_companies(cf)
-    except ExternalServiceError as exc:
-        procurement["contracts_finder"] = {"error": str(exc)}
-
     for company in list_companies(limit=company_limit):
         try:
             capture_snapshot(company.id)
@@ -98,26 +85,19 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
     alerts = evaluate_watchlists()
     ranked = opportunity_feed(limit=company_limit)
     return {
-        "window_hours": hours,
-        "companies_seen": len(companies),
-        "companies_refreshed": refreshed,
-        "companies_enriched": enriched,
-        "ownership_enriched": ownership_enriched,
-        "accounts_enriched": accounts_enriched,
-        "snapshots_captured": snapshots,
-        "graphs_rebuilt": graphs,
-        "alerts_generated": len(alerts),
-        "actions_proposed": proposed_actions,
-        "procurement": procurement,
-        "opportunities_ranked": len(ranked),
-        "top_opportunities": ranked[:25],
+        "window_hours": hours, "bootstrap_mode": initially_empty,
+        "companies_seen": len(companies), "companies_refreshed": refreshed,
+        "companies_enriched": enriched, "ownership_enriched": ownership_enriched,
+        "accounts_enriched": accounts_enriched, "snapshots_captured": snapshots,
+        "graphs_rebuilt": graphs, "alerts_generated": len(alerts),
+        "actions_proposed": proposed_actions, "procurement": procurement,
+        "opportunities_ranked": len(ranked), "top_opportunities": ranked[:25],
         "failures": failures,
     }
 
 
 def main() -> None:
     import json
-
     print(json.dumps(run_radar(), default=str, indent=2))
 
 
