@@ -10,7 +10,14 @@ from typing import Any
 import httpx
 
 from .config import get_settings
-from .db import EvidenceRow, get_company, list_evidence, save_evidence
+from .db import (
+    EvidenceRow,
+    get_company,
+    list_evidence,
+    replace_signals,
+    save_evidence,
+)
+from .signals import derive_signals
 from .uk import ExternalServiceError
 
 FACT_ALIASES = {
@@ -85,7 +92,12 @@ def _accounts_documents(company_id: str, limit: int = 2) -> list[tuple[str, str]
     return documents
 
 
-def _fetch_metrics(document_id: str, headers: dict[str, str], base_url: str, timeout: float) -> tuple[str, dict[str, float]]:
+def _fetch_metrics(
+    document_id: str,
+    headers: dict[str, str],
+    base_url: str,
+    timeout: float,
+) -> tuple[str, dict[str, float]]:
     url = f"{base_url.rstrip('/')}/document/{document_id}/content"
     response = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
     try:
@@ -93,6 +105,15 @@ def _fetch_metrics(document_id: str, headers: dict[str, str], base_url: str, tim
     except httpx.HTTPStatusError as exc:
         raise ExternalServiceError(f"Companies House Document API returned {response.status_code}") from exc
     return url, extract_ixbrl_metrics(response.text)
+
+
+def _cached_financials(company_id: str) -> dict[str, EvidenceRow]:
+    return {
+        str((row.value or {}).get("document_id") or row.raw_reference): row
+        for row in list_evidence(company_id)
+        if row.fact_type == "financial_metrics"
+        and ((row.value or {}).get("document_id") or row.raw_reference)
+    }
 
 
 def enrich_latest_accounts(company_id: str) -> dict[str, Any]:
@@ -111,8 +132,27 @@ def enrich_latest_accounts(company_id: str) -> dict[str, Any]:
         "Accept": "application/xhtml+xml,application/xml,text/html;q=0.9,*/*;q=0.1",
     }
 
+    cached = _cached_financials(company_id)
     saved: list[dict[str, Any]] = []
+    fetched = 0
     for document_id, filing_date in documents:
+        existing = cached.get(document_id)
+        if existing is not None:
+            saved.append(
+                {
+                    "document_id": document_id,
+                    "filing_date": str((existing.value or {}).get("filing_date") or filing_date),
+                    "metrics": {
+                        key: value
+                        for key, value in (existing.value or {}).items()
+                        if key in FACT_ALIASES
+                    },
+                    "evidence_id": existing.id,
+                    "cached": True,
+                }
+            )
+            continue
+
         url, metrics = _fetch_metrics(
             document_id,
             headers,
@@ -139,15 +179,18 @@ def enrich_latest_accounts(company_id: str) -> dict[str, Any]:
             raw_reference=document_id,
         )
         save_evidence([evidence])
+        fetched += 1
         saved.append(
             {
                 "document_id": document_id,
                 "filing_date": filing_date,
                 "metrics": metrics,
                 "evidence_id": evidence_id,
+                "cached": False,
             }
         )
 
+    replace_signals(company_id, derive_signals(company_id, list_evidence(company_id)))
     latest = saved[0]
     return {
         "company_id": company_id,
@@ -156,5 +199,6 @@ def enrich_latest_accounts(company_id: str) -> dict[str, Any]:
         "metrics": latest["metrics"],
         "evidence_id": latest["evidence_id"],
         "documents_ingested": len(saved),
+        "documents_fetched": fetched,
         "history": saved,
     }
