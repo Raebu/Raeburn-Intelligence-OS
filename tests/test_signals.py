@@ -47,6 +47,14 @@ def test_derive_director_change_signal():
     assert any(signal.kind == "director_change" for signal in signals)
 
 
+def test_old_director_change_is_not_current_signal():
+    signals = derive_signals(
+        "c1",
+        [_evidence("o1", "officers", {"items": [{"name": "A Director", "resigned_on": "2018-01-01"}]})],
+    )
+    assert not any(signal.kind == "director_change" for signal in signals)
+
+
 def test_derive_technology_signal():
     signals = derive_signals(
         "c1",
@@ -73,8 +81,42 @@ def test_derive_filing_distress_signal():
             _evidence(
                 "f1",
                 "filing_history",
-                {"items": [{"category": "insolvency", "description": "administration"}]},
+                {
+                    "items": [
+                        {
+                            "date": "2026-08-01",
+                            "category": "insolvency",
+                            "description": "administration",
+                        }
+                    ]
+                },
             )
         ],
     )
     assert any(signal.kind == "distress" for signal in signals)
+
+
+def test_old_solvency_statement_is_not_distress():
+    signals = derive_signals(
+        "c1",
+        [
+            _evidence(
+                "f1",
+                "filing_history",
+                {
+                    "items": [
+                        {
+                            "date": "2022-05-27",
+                            "category": "insolvency",
+                            "description": "legacy",
+                            "type": "CAP-SS",
+                            "description_values": {
+                                "description": "Solvency Statement dated 26/05/22"
+                            },
+                        }
+                    ]
+                },
+            )
+        ],
+    )
+    assert not any(signal.kind == "distress" for signal in signals)
