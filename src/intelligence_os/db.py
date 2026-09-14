@@ -152,6 +152,10 @@ def _detach(session: Session, row):
     return row
 
 
+def _dedupe_by_id(rows):
+    return list({row.id: row for row in rows}.values())
+
+
 def upsert_company(row: CompanyRow) -> CompanyRow:
     with session_scope() as session:
         existing = session.get(CompanyRow, row.id)
@@ -173,7 +177,7 @@ def save_evidence(rows: list[EvidenceRow]) -> None:
     if not rows:
         return
     with session_scope() as session:
-        for row in rows:
+        for row in _dedupe_by_id(rows):
             existing = session.get(EvidenceRow, row.id)
             if existing:
                 for key, value in row.model_dump().items():
@@ -187,7 +191,7 @@ def replace_signals(company_id: str, rows: list[SignalRow]) -> None:
     with session_scope() as session:
         session.exec(delete(SignalRow).where(SignalRow.company_id == company_id))
         session.flush()
-        session.add_all(rows)
+        session.add_all(_dedupe_by_id(rows))
         session.commit()
 
 
@@ -262,7 +266,7 @@ def replace_relations(source_type: str, source_id: str, rows: list[RelationRow])
             )
         )
         session.flush()
-        session.add_all(rows)
+        session.add_all(_dedupe_by_id(rows))
         session.commit()
 
 
@@ -285,7 +289,7 @@ def replace_people(company_id: str, rows: list[PersonRow]) -> None:
     with session_scope() as session:
         session.exec(delete(PersonRow).where(PersonRow.company_id == company_id))
         session.flush()
-        session.add_all(rows)
+        session.add_all(_dedupe_by_id(rows))
         session.commit()
 
 
@@ -320,7 +324,7 @@ def list_watchlists() -> list[WatchlistRow]:
 
 def save_alerts(rows: list[AlertRow]) -> None:
     with session_scope() as session:
-        for row in rows:
+        for row in _dedupe_by_id(rows):
             existing = session.get(AlertRow, row.id)
             if existing:
                 for key, value in row.model_dump().items():
