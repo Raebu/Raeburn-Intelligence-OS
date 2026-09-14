@@ -1,29 +1,25 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import UTC, datetime
-from typing import Iterator
+from datetime import datetime
 
-from sqlalchemy import Column, JSON, delete
+from sqlalchemy import JSON, Column, delete
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from .config import get_settings
-from .models import Company, Evidence, Signal
 
 
 class CompanyRow(SQLModel, table=True):
     id: str = Field(primary_key=True)
-    company_number: str | None = Field(default=None, index=True)
-    name: str = Field(index=True)
+    name: str
+    company_number: str | None = Field(default=None, index=True, unique=True)
     jurisdiction: str = "GB"
     status: str | None = None
     company_type: str | None = None
-    incorporated_on: str | None = None
     sic_codes: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    registered_office: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    website: str | None = None
-    metadata_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    registered_address: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    incorporated_at: datetime | None = None
+    updated_at: datetime
 
 
 class EvidenceRow(SQLModel, table=True):
@@ -31,7 +27,7 @@ class EvidenceRow(SQLModel, table=True):
     company_id: str = Field(index=True)
     source_id: str = Field(index=True)
     fact_type: str = Field(index=True)
-    observed_at: datetime = Field(index=True)
+    observed_at: datetime
     source_url: str | None = None
     value: dict = Field(default_factory=dict, sa_column=Column(JSON))
     confidence: float = 1.0
@@ -42,13 +38,11 @@ class SignalRow(SQLModel, table=True):
     id: str = Field(primary_key=True)
     company_id: str = Field(index=True)
     kind: str = Field(index=True)
-    title: str
-    summary: str
-    observed_at: datetime = Field(index=True)
-    strength: float = 0.5
-    confidence: float = 0.8
+    strength: float
+    confidence: float
+    detected_at: datetime
+    explanation: str | None = None
     evidence_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    metadata_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
 
 
 class SnapshotRow(SQLModel, table=True):
@@ -56,8 +50,8 @@ class SnapshotRow(SQLModel, table=True):
     company_id: str = Field(index=True)
     snapshot_type: str = Field(index=True)
     captured_at: datetime = Field(index=True)
-    payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    payload_hash: str = Field(index=True)
+    data: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    evidence_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
 
 
 class RelationRow(SQLModel, table=True):
@@ -67,94 +61,104 @@ class RelationRow(SQLModel, table=True):
     relation: str = Field(index=True)
     target_type: str = Field(index=True)
     target_id: str = Field(index=True)
-    confidence: float = 0.8
+    confidence: float = 1.0
     evidence_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    observed_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    observed_at: datetime
 
 
 class PersonRow(SQLModel, table=True):
     id: str = Field(primary_key=True)
     company_id: str = Field(index=True)
-    name: str = Field(index=True)
-    role: str
-    role_family: str = Field(index=True)
+    name: str
+    role: str | None = Field(default=None, index=True)
+    role_family: str | None = Field(default=None, index=True)
     appointed_on: str | None = None
     resigned_on: str | None = None
-    confidence: float = 0.8
+    confidence: float = 1.0
     source_url: str | None = None
     evidence_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    updated_at: datetime
 
 
 class WatchlistRow(SQLModel, table=True):
     id: str = Field(primary_key=True)
     name: str
     company_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    minimum_score: float = 70.0
-    enabled: bool = True
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    signal_kinds: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    minimum_strength: float = 0.5
+    active: bool = True
+    created_at: datetime
+    updated_at: datetime
 
 
 class AlertRow(SQLModel, table=True):
     id: str = Field(primary_key=True)
     watchlist_id: str = Field(index=True)
     company_id: str = Field(index=True)
-    opportunity_id: str | None = None
-    title: str
+    signal_kind: str = Field(index=True)
+    strength: float
     summary: str
-    score: float
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    evidence_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    created_at: datetime = Field(index=True)
     acknowledged: bool = False
 
 
 class ActionRow(SQLModel, table=True):
     id: str = Field(primary_key=True)
     company_id: str = Field(index=True)
+    opportunity_kind: str = Field(index=True)
     action_type: str = Field(index=True)
     status: str = Field(default="proposed", index=True)
     payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
     evidence_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    created_at: datetime
     approved_at: datetime | None = None
-    executed_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class OutcomeRow(SQLModel, table=True):
     id: str = Field(primary_key=True)
     company_id: str = Field(index=True)
-    outcome_type: str = Field(index=True)
-    value: float = 1.0
-    metadata_json: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    occurred_at: datetime = Field(default_factory=lambda: datetime.now(UTC), index=True)
+    action_id: str | None = Field(default=None, index=True)
+    opportunity_kind: str = Field(index=True)
+    outcome: str = Field(index=True)
+    revenue_gbp: float | None = None
+    notes: str | None = None
+    created_at: datetime
 
 
-_engine = None
+def _engine():
+    settings = get_settings()
+    args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+    return create_engine(settings.database_url, connect_args=args, pool_pre_ping=True)
 
 
-def get_engine():
-    global _engine
-    if _engine is None:
-        settings = get_settings()
-        connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-        _engine = create_engine(settings.database_url, connect_args=connect_args, pool_pre_ping=True)
-    return _engine
+engine = _engine()
 
 
 def init_db() -> None:
-    SQLModel.metadata.create_all(get_engine())
+    SQLModel.metadata.create_all(engine)
 
 
 @contextmanager
-def session_scope() -> Iterator[Session]:
-    with Session(get_engine()) as session:
+def session_scope():
+    with Session(engine) as session:
         yield session
 
 
-def upsert_company(company: Company) -> CompanyRow:
-    row = CompanyRow(**company.model_dump())
+def _detach(session: Session, row):
+    if row is not None:
+        session.expunge(row)
+    return row
+
+
+def upsert_company(row: CompanyRow) -> CompanyRow:
     with session_scope() as session:
         existing = session.get(CompanyRow, row.id)
+        if existing is None and row.company_number:
+            existing = session.exec(
+                select(CompanyRow).where(CompanyRow.company_number == row.company_number)
+            ).first()
         if existing:
             for key, value in row.model_dump().items():
                 setattr(existing, key, value)
@@ -162,26 +166,12 @@ def upsert_company(company: Company) -> CompanyRow:
         session.add(row)
         session.commit()
         session.refresh(row)
-        return row
-
-
-def get_company(company_id: str) -> CompanyRow | None:
-    with session_scope() as session:
-        row = session.get(CompanyRow, company_id)
-        if row:
-            session.expunge(row)
-        return row
-
-
-def list_companies(limit: int = 500) -> list[CompanyRow]:
-    with session_scope() as session:
-        rows = list(session.exec(select(CompanyRow).limit(limit)).all())
-        for row in rows:
-            session.expunge(row)
-        return rows
+        return _detach(session, row)
 
 
 def save_evidence(rows: list[EvidenceRow]) -> None:
+    if not rows:
+        return
     with session_scope() as session:
         for row in rows:
             existing = session.get(EvidenceRow, row.id)
@@ -193,20 +183,47 @@ def save_evidence(rows: list[EvidenceRow]) -> None:
         session.commit()
 
 
-def list_evidence(company_id: str) -> list[EvidenceRow]:
-    with session_scope() as session:
-        rows = list(session.exec(select(EvidenceRow).where(EvidenceRow.company_id == company_id)).all())
-        for row in rows:
-            session.expunge(row)
-        return rows
-
-
 def replace_signals(company_id: str, rows: list[SignalRow]) -> None:
     with session_scope() as session:
         session.exec(delete(SignalRow).where(SignalRow.company_id == company_id))
         session.flush()
         session.add_all(rows)
         session.commit()
+
+
+def get_company(company_id: str) -> CompanyRow | None:
+    with session_scope() as session:
+        return _detach(session, session.get(CompanyRow, company_id))
+
+
+def get_company_by_number(company_number: str) -> CompanyRow | None:
+    with session_scope() as session:
+        row = session.exec(
+            select(CompanyRow).where(CompanyRow.company_number == company_number.upper())
+        ).first()
+        return _detach(session, row)
+
+
+def list_companies(limit: int = 100) -> list[CompanyRow]:
+    with session_scope() as session:
+        rows = list(session.exec(select(CompanyRow).limit(limit)).all())
+        for row in rows:
+            session.expunge(row)
+        return rows
+
+
+def list_evidence(company_id: str) -> list[EvidenceRow]:
+    with session_scope() as session:
+        rows = list(
+            session.exec(
+                select(EvidenceRow)
+                .where(EvidenceRow.company_id == company_id)
+                .order_by(EvidenceRow.observed_at.desc())
+            ).all()
+        )
+        for row in rows:
+            session.expunge(row)
+        return rows
 
 
 def list_signals(company_id: str) -> list[SignalRow]:
@@ -222,8 +239,7 @@ def save_snapshot(row: SnapshotRow) -> SnapshotRow:
         session.add(row)
         session.commit()
         session.refresh(row)
-        session.expunge(row)
-        return row
+        return _detach(session, row)
 
 
 def list_snapshots(company_id: str, snapshot_type: str | None = None) -> list[SnapshotRow]:
@@ -291,8 +307,7 @@ def save_watchlist(row: WatchlistRow) -> WatchlistRow:
         session.add(row)
         session.commit()
         session.refresh(row)
-        session.expunge(row)
-        return row
+        return _detach(session, row)
 
 
 def list_watchlists() -> list[WatchlistRow]:
@@ -333,24 +348,17 @@ def save_action(row: ActionRow) -> ActionRow:
         session.add(row)
         session.commit()
         session.refresh(row)
-        session.expunge(row)
-        return row
+        return _detach(session, row)
 
 
 def get_action(action_id: str) -> ActionRow | None:
     with session_scope() as session:
-        row = session.get(ActionRow, action_id)
-        if row:
-            session.expunge(row)
-        return row
+        return _detach(session, session.get(ActionRow, action_id))
 
 
-def list_actions(company_id: str | None = None, limit: int = 100) -> list[ActionRow]:
+def list_actions(limit: int = 100) -> list[ActionRow]:
     with session_scope() as session:
-        statement = select(ActionRow)
-        if company_id:
-            statement = statement.where(ActionRow.company_id == company_id)
-        rows = list(session.exec(statement.order_by(ActionRow.created_at.desc()).limit(limit)).all())
+        rows = list(session.exec(select(ActionRow).order_by(ActionRow.created_at.desc()).limit(limit)).all())
         for row in rows:
             session.expunge(row)
         return rows
@@ -361,28 +369,12 @@ def save_outcome(row: OutcomeRow) -> OutcomeRow:
         session.add(row)
         session.commit()
         session.refresh(row)
-        session.expunge(row)
-        return row
+        return _detach(session, row)
 
 
-def list_outcomes(company_id: str | None = None, limit: int = 500) -> list[OutcomeRow]:
+def list_outcomes(limit: int = 1000) -> list[OutcomeRow]:
     with session_scope() as session:
-        statement = select(OutcomeRow)
-        if company_id:
-            statement = statement.where(OutcomeRow.company_id == company_id)
-        rows = list(session.exec(statement.order_by(OutcomeRow.occurred_at.desc()).limit(limit)).all())
+        rows = list(session.exec(select(OutcomeRow).order_by(OutcomeRow.created_at.desc()).limit(limit)).all())
         for row in rows:
             session.expunge(row)
         return rows
-
-
-def company_to_model(row: CompanyRow) -> Company:
-    return Company(**row.model_dump())
-
-
-def evidence_to_model(row: EvidenceRow) -> Evidence:
-    return Evidence(**row.model_dump())
-
-
-def signal_to_model(row: SignalRow) -> Signal:
-    return Signal(**row.model_dump())
