@@ -15,6 +15,7 @@ from .procurement import (
     contracts_finder_feed,
     find_a_tender_feed,
 )
+from .procurement_demand import rank_procurement_demand
 from .service import opportunity_feed, refresh_company
 from .uk import ExternalServiceError
 
@@ -26,8 +27,6 @@ def _window(hours: int) -> tuple[str, str]:
 
 
 def _bootstrap_windows(requested_hours: int) -> list[int]:
-    # Empty production databases need enough history to find award suppliers carrying
-    # usable Companies House identifiers. Stop as soon as one window seeds companies.
     return list(dict.fromkeys([max(requested_hours, 24), 168, 720, 2160]))
 
 
@@ -117,9 +116,29 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
         try:
             capture_snapshot(company.id)
             snapshots += 1
-            proposed_actions += len(propose_actions(company.id, minimum_score=70))
+            proposed_actions += len(propose_actions(company.id, minimum_score=55))
         except (KeyError, TypeError, ValueError) as exc:
             failures.append({"company": company.id, "error": str(exc)})
+
+    live_demand: list[dict] = []
+    start, end = _window(max(hours, 168))
+    try:
+        tender_records = find_a_tender_feed(updated_from=start, updated_to=end, stages="tender", limit=100)
+        live_demand.extend(rank_procurement_demand(tender_records, limit=25))
+    except ExternalServiceError as exc:
+        procurement["find_a_tender_live_demand"] = {"error": str(exc)}
+    try:
+        tender_records = contracts_finder_feed(
+            published_from=start,
+            published_to=end,
+            stages=["tender"],
+            size=100,
+            page=1,
+        )
+        live_demand.extend(rank_procurement_demand(tender_records, limit=25))
+    except ExternalServiceError as exc:
+        procurement["contracts_finder_live_demand"] = {"error": str(exc)}
+    live_demand = sorted(live_demand, key=lambda item: item["score"], reverse=True)[:25]
 
     alerts = evaluate_watchlists()
     ranked = opportunity_feed(limit=company_limit)
@@ -137,6 +156,7 @@ def run_radar(hours: int = 24, company_limit: int = 500) -> dict:
         "alerts_generated": len(alerts),
         "actions_proposed": proposed_actions,
         "procurement": procurement,
+        "live_procurement_demand": live_demand,
         "opportunities_ranked": len(ranked),
         "top_opportunities": ranked[:25],
         "failures": failures,
