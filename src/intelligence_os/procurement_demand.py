@@ -98,7 +98,16 @@ def _is_live_tender(record: dict[str, Any], now: datetime) -> bool:
 
     if "tender" in tags or "planning" in tags:
         return True
-    return any(marker in text for marker in LIVE_MARKERS)
+    if any(marker in text for marker in LIVE_MARKERS):
+        return True
+
+    # Some procurement feeds omit lifecycle tags/boilerplate from otherwise
+    # current tender records. A recent, commercially relevant notice with a
+    # tender value is still actionable, while award wording remains excluded.
+    has_strong_match = any(keyword in text for keyword in KEYWORD_WEIGHTS)
+    has_tender_value = _value_amount(record) > 0
+    is_recent = parsed is not None and 0 <= (now - parsed).days <= 45
+    return has_strong_match and has_tender_value and is_recent
 
 
 def score_procurement_demand(record: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
