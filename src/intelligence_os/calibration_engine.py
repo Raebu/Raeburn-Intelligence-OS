@@ -149,7 +149,8 @@ def empirical_calibration(rows: list[dict[str, Any]], bins: int = 10) -> dict[st
         return {"samples": 0, "weighted_brier_score": None, "bins": []}
     total_weight = sum(weight for _, _, weight in clean)
     if total_weight <= 0:
-        total_weight = float(len(clean)); clean = [(p, o, 1.0) for p, o, _ in clean]
+        total_weight = float(len(clean))
+        clean = [(p, o, 1.0) for p, o, _ in clean]
     brier = sum(weight * (probability - outcome) ** 2 for probability, outcome, weight in clean) / total_weight
     grouped: dict[int, list[tuple[float, int, float]]] = defaultdict(list)
     bin_count = max(2, min(int(bins), 20))
@@ -157,7 +158,8 @@ def empirical_calibration(rows: list[dict[str, Any]], bins: int = 10) -> dict[st
         grouped[min(bin_count - 1, int(probability * bin_count))].append((probability, outcome, weight))
     reliability = []
     for index in sorted(grouped):
-        items = grouped[index]; weight_sum = sum(item[2] for item in items) or float(len(items))
+        items = grouped[index]
+        weight_sum = sum(item[2] for item in items) or float(len(items))
         reliability.append({"bin": index, "samples": len(items), "mean_prediction": round(sum(item[0] * item[2] for item in items) / weight_sum, 4), "observed_rate": round(sum(item[1] * item[2] for item in items) / weight_sum, 4)})
     return {"samples": len(clean), "weighted_brier_score": round(brier, 6), "bins": reliability}
 
